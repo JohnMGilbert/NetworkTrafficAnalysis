@@ -7,10 +7,14 @@ Use this directory for topology reconstruction experiments, notes, and task-spec
 - `outputs/task1/tables/q1_1a_router_summary.csv`
 - `outputs/task1/tables/q1_1a_discussion.md`
 - `outputs/task1/figures/q1_1a_router_summary_dashboard.png`
+- `outputs/task1/tables/q1_1b_volume_summary.csv`
+- `outputs/task1/tables/q1_1b_discussion.md`
+- `outputs/task1/figures/q1_1b_volume_distributions.png`
 
 Run it from the project root with:
 
 ```bash
 python3.11 task1/q1_1a_summary.py
 python3.11 task1/q1_1a_plots.py
+python3.11 task1/q1_1b_volume.py
 ```
