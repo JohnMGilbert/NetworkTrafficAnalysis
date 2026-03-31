@@ -63,3 +63,67 @@ Artifacts written by default:
 - `outputs/task2/tables/q2_1c_summary.json`
 - `outputs/task2/tables/q2_1c_report.md`
 - `data/interim/task2_q2_1c_engineered_sample.parquet`
+
+## Question 2.2(a)
+
+Run the clustering workflow with:
+
+```bash
+/opt/homebrew/bin/python3.11 task2/q2_2a_clustering.py
+```
+
+Artifacts written by default:
+
+- `outputs/task2/figures/q2_2a_minibatchkmeans_clusters.png`
+- `outputs/task2/figures/q2_2a_hdbscan_clusters.png`
+- `outputs/task2/figures/q2_2a_gaussianmixture_clusters.png`
+- `outputs/task2/tables/q2_2a_cluster_assignments.csv`
+- `outputs/task2/tables/q2_2a_cluster_sizes.csv`
+- `outputs/task2/tables/q2_2a_clustering_summary.csv`
+- `outputs/task2/tables/q2_2a_hyperparameter_search.csv`
+- `outputs/task2/tables/q2_2a_summary.json`
+- `outputs/task2/tables/q2_2a_report.md`
+
+## Question 2.2(b)
+
+Run the internal-validation workflow with:
+
+```bash
+/opt/homebrew/bin/python3.11 task2/q2_2b_evaluation.py
+```
+
+Artifacts written by default:
+
+- `outputs/task2/tables/q2_2b_internal_validation.csv`
+- `outputs/task2/tables/q2_2b_summary.json`
+- `outputs/task2/tables/q2_2b_report.md`
+
+## Question 2.2(c)
+
+Run the HDBSCAN cluster-interpretation workflow with:
+
+```bash
+/opt/homebrew/bin/python3.11 task2/q2_2c_hdbscan_analysis.py
+```
+
+Artifacts written by default:
+
+- `outputs/task2/tables/q2_2c_hdbscan_cluster_statistics.csv`
+- `outputs/task2/tables/q2_2c_hdbscan_cluster_mapping.csv`
+- `outputs/task2/tables/q2_2c_hdbscan_confusion_style_mapping.csv`
+- `outputs/task2/tables/q2_2c_hdbscan_summary.json`
+- `outputs/task2/tables/q2_2c_hdbscan_report.md`
+
+## Question 2.3(a)
+
+Run the discoverability-analysis workflow with:
+
+```bash
+/opt/homebrew/bin/python3.11 task2/q2_3a_discoverability.py
+```
+
+Artifacts written by default:
+
+- `outputs/task2/tables/q2_3a_discoverability_ranking.csv`
+- `outputs/task2/tables/q2_3a_summary.json`
+- `outputs/task2/tables/q2_3a_report.md`
