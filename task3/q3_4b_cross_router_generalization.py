@@ -729,7 +729,7 @@ def write_report(
         ),
         (
             "- The standard and cross-router evaluations use different test distributions, so the comparison below "
-            "should be interpreted as a deployment stress test rather than an apples-to-apples holdout benchmark."
+            "should be interpreted as a deployment stress test rather than an apples-to-apples benchmark."
         ),
         "",
         "## Overall Comparison",

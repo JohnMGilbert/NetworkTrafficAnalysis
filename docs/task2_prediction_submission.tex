@@ -1,0 +1,140 @@
+\documentclass[journal,onecolumn]{IEEEtran}
+
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{url}
+\usepackage{float}
+
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\graphicspath{{../outputs/task2/figures/}{outputs/task2/figures/}}
+
+\title{Task 2 Prediction Submission for FLNET2023 Attack Discovery}
+\author{John Gilbert}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This submission reports the Task 2 predictions produced for the unlabeled FLNET2023 traffic data. In the assignment, Task 2 requires unsupervised discovery of traffic classes, comparison of multiple clustering algorithms, semantic mapping of discovered clusters to the 11 known traffic categories, and a prediction submission before ground-truth labels are released. The repository pipeline selected HDBSCAN as the strongest unsupervised model using internal validation metrics, then mapped its discovered clusters to five semantic labels plus an \texttt{Unknown} bucket for ambiguous or weakly supported behavior. The attached row-level prediction CSV covers the 5,000-row fitted sample used for final clustering, which is consistent with the assignment's explicit allowance to use a stratified sample for computationally expensive clustering on this large dataset.
+\end{abstract}
+
+\section{Assignment Context and Submission Scope}
+Task 2 of the assignment is an unlabeled attack-discovery problem on FLNET2023 flow data. The assignment states that the original traffic belongs to 11 classes: Normal, DDoS Bot, DDoS Dyn, DDoS Stomp, DDoS TCP, DoS Hulk, DoS SlowHTTP, Infiltration MITM, Web Command Injection, Web SQL Injection, and Web XSS. The required workflow is to preprocess the flows, engineer informative features, compare at least three clustering methods, choose the best-performing unsupervised model, and then map the discovered clusters to known traffic categories using networking evidence.
+
+The assignment also notes that the dataset is very large and explicitly permits a stratified random sample for computationally expensive clustering. The repository follows that guidance. Preprocessing was applied to the full deduplicated dataset, dimensionality reduction was summarized on a 100,000-row stratified sample, and the final clustering comparison was fit on a 5,000-row stratified subset. For that reason, the prediction file submitted with this writeup corresponds to the clustered sample for which final HDBSCAN assignments are stored.
+
+The report is intentionally conservative. When a cluster did not provide strong enough evidence for a named attack family, it was not force-mapped. Instead, uncertain behavior remained in the \texttt{Unknown} bucket, which is more appropriate for an unlabeled discovery task than over-claiming a specific class.
+
+\section{Preprocessing and Feature Summary}
+The preprocessing and feature-engineering steps were designed to stay aligned with Questions 2.1(a)--2.1(c) of the assignment. Table~\ref{tab:prep_summary} summarizes the main dataset reductions and feature choices that support the Task 2 predictions.
+
+\begin{table}[H]
+\caption{Task 2 preprocessing and feature summary.}
+\label{tab:prep_summary}
+\centering
+\small
+\begin{tabularx}{\linewidth}{@{}lY@{}}
+\toprule
+Item & Summary \\
+\midrule
+Rows before deduplication & 5,416,155 flow records \\
+Duplicate rows removed & 38,899 duplicate records \\
+Rows after deduplication & 5,377,256 flow records \\
+Features retained & 67 numeric features after cleaning \\
+Features removed & 12 features with zero variance or no usable finite values \\
+Scaling choice & Z-score standardization with StandardScaler to support PCA and preserve informative attack deviations \\
+PCA result & 18 principal components retained at least 95\% of the variance \\
+Embedding sample & 100,000 rows, stratified to preserve the observed router distribution across 39 routers \\
+Engineered features & \texttt{directional\_byte\_imbalance}, \texttt{bytes\_per\_packet}, \texttt{burst\_idle\_log\_ratio}, and \texttt{packet\_size\_asymmetry} \\
+Interpretation note & The \texttt{protocol} feature was removed during preprocessing because it had zero variance, so cluster interpretation relies on ports, duration, packet counts, byte counts, and directionality instead \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+These choices are important for the prediction submission because the semantic mapping in Question 2.2(c) depends on interpretable flow-level signals. The engineered features emphasized directionality, burstiness, and packet-size asymmetry, which are all plausible cues for distinguishing broad DDoS and DoS families from routine background traffic.
+
+\section{Clustering Model Selection}
+Three required clustering families were evaluated on the fitted sample: MiniBatchKMeans (partitional), HDBSCAN (density based), and GaussianMixture (model based). Hyperparameter comparisons were performed on a 2,000-row subset of the fitted sample to keep silhouette- and BIC-based model selection practical. Hyperparameters were selected using the criteria described in the assignment: silhouette-based selection for MiniBatchKMeans, a silhouette-times-coverage criterion for HDBSCAN, and BIC for GaussianMixture.
+
+The selected configurations were MiniBatchKMeans with \texttt{n\_clusters=8}, \texttt{batch\_size=4096}, \texttt{max\_iter=200}, and \texttt{n\_init=10}; HDBSCAN with \texttt{min\_cluster\_size=250}, \texttt{min\_samples=25}, and \texttt{cluster\_selection\_method=eom}; and GaussianMixture with \texttt{n\_components=14}, \texttt{covariance\_type=diag}, \texttt{reg\_covar=0.0001}, \texttt{max\_iter=200}, and \texttt{init\_params=kmeans}.
+
+Table~\ref{tab:internal_validation} shows the final internal validation results from Question 2.2(b). HDBSCAN produced the strongest overall profile, with the best silhouette score, the lowest Davies-Bouldin Index, and the highest Calinski-Harabasz Index. It recovered five non-noise clusters and labeled 16.78\% of the fitted sample as noise. That behavior is well matched to this assignment because the data are highly imbalanced; HDBSCAN can preserve dense majority structures without forcing rare or ambiguous flows into an artificial cluster.
+
+\begin{table}[H]
+\caption{Internal validation comparison for the final clustering models.}
+\label{tab:internal_validation}
+\centering
+\small
+\begin{tabularx}{\linewidth}{@{}lccYrrr@{}}
+\toprule
+Algorithm & Clusters & Noise (\%) & Metric scope & Silhouette & DBI & CHI \\
+\midrule
+HDBSCAN & 5 & 16.78 & non-noise only & 0.5014 & 0.8603 & 3956.03 \\
+GaussianMixture & 14 & 0.00 & full sample & 0.3926 & 1.0465 & 1306.44 \\
+MiniBatchKMeans & 8 & 0.00 & full sample & 0.4026 & 1.0856 & 1296.47 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Although GaussianMixture came closer to the assignment's nominal 11 classes in terms of component count, its internal separation was weaker. MiniBatchKMeans scaled well but forced every flow into one of eight partitions. HDBSCAN was therefore selected as the best clustering model for the prediction submission.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.82\linewidth]{q2_2a_hdbscan_clusters.png}
+\caption{HDBSCAN assignments projected onto the Task 2.1(b) UMAP embedding.}
+\label{fig:hdbscan}
+\end{figure}
+
+\section{Final Predicted Mapping}
+The final cluster-to-class mapping is shown in Table~\ref{tab:mapping}. Each mapping was based on cluster size, duration, packet counts, byte counts, dominant destination ports, and directional behavior. Because the assignment specifically allows an \texttt{Unknown} label when a discovered cluster does not clearly match one of the known categories, the noise group was kept as \texttt{Unknown} rather than being forced into a named class.
+
+\begin{table}[H]
+\caption{Final HDBSCAN cluster-to-class mapping for the 5,000-row fitted sample.}
+\label{tab:mapping}
+\centering
+\small
+\begin{tabularx}{\linewidth}{@{}cYcrr@{}}
+\toprule
+Cluster & Predicted label & Confidence & Rows & Share (\%) \\
+\midrule
+$-1$ & Unknown & low & 839 & 16.78 \\
+0 & DDoS TCP & high & 412 & 8.24 \\
+1 & DDoS Bot & medium & 1,287 & 25.74 \\
+2 & Normal & medium & 1,107 & 22.14 \\
+3 & DoS SlowHTTP & high & 378 & 7.56 \\
+4 & DoS Hulk & medium & 977 & 19.54 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The supporting evidence for each mapping is summarized below.
+
+\begin{itemize}
+\item \textbf{Cluster 0 to DDoS TCP (high confidence):} This cluster has extremely small flows, with mean 1.96 packets and 111.40 bytes per flow, and it is almost completely one directional with a mean down/up ratio of 0.00. That is consistent with compact TCP flood behavior that generates many low-content requests with minimal response traffic.
+\item \textbf{Cluster 1 to DDoS Bot (medium confidence):} This group contains large flows, averaging 105.64 packets and 79,220.44 bytes, with strong forward/backward packet-size asymmetry (0.84). Its traffic is concentrated on a narrow set of service ports, especially 7777 and 8080, which supports the interpretation of coordinated bot-driven flooding.
+\item \textbf{Cluster 2 to Normal (medium confidence):} This cluster consists of short, balanced exchanges with mean duration 545.15, mean 3.68 packets, and a down/up ratio of 1.00. Its destination ports are more varied than the attack-oriented clusters, making it the strongest candidate for routine benign background traffic in the fitted sample.
+\item \textbf{Cluster 3 to DoS SlowHTTP (high confidence):} These flows are very long lived, with mean duration 32,199,366, but extremely low rate at only 3.22 packets per second. That long-duration, low-rate profile is a strong fit for SlowHTTP-style application-layer connection exhaustion.
+\item \textbf{Cluster 4 to DoS Hulk (medium confidence):} This cluster has sustained flows with mean duration 13,891,066 and about 104.55 packets per flow. The behavior is more burst-like than benign traffic and is concentrated on a small set of destination ports, which is consistent with a Hulk-style HTTP flooding pattern.
+\item \textbf{Noise cluster to Unknown (low confidence):} HDBSCAN treated 839 flows as noise or outliers. Their destination ports are more mixed than the dense clusters and their average byte volume is comparatively high, which suggests a blend of rare attacks, ambiguous flows, and low-density behavior that should not be over-labeled without stronger evidence.
+\end{itemize}
+
+\section{Interpretation Relative to the 11 Known Classes}
+Only five named classes emerged as dedicated dense clusters in the best unsupervised solution: Normal, DDoS Bot, DDoS TCP, DoS Hulk, and DoS SlowHTTP. The remaining named classes from the assignment---DDoS Dyn, DDoS Stomp, Infiltration MITM, Web Command Injection, Web SQL Injection, and Web XSS---did not appear as standalone dense groups in the fitted sample.
+
+That outcome is consistent with the assignment's emphasis on severe class imbalance and difficult rare-class discovery. The repository's Task 2.3 analysis already suggests that the easiest classes to discover without labels are those with extreme low-entropy flow signatures, while rare web attacks and infiltration behavior are likely to be absorbed into larger regions, fragmented into tiny components, or rejected as noise. For submission purposes, those unresolved behaviors are represented conservatively through the \texttt{Unknown} bucket rather than through speculative one-to-one labels.
+
+\section{Submission Artifacts}
+This writeup accompanies the following Task 2 submission files:
+
+\begin{itemize}
+\item \path{outputs/task2/tables/q2_task2_predictions.csv}: row-level predicted labels for the 5,000 clustered flows.
+\item \path{outputs/task2/tables/q2_task2_prediction_summary.json}: machine-readable summary of the prediction counts and cluster mappings.
+\item \path{docs/task2_prediction_submission.tex}: the LaTeX source for this submission writeup.
+\end{itemize}
+
+In summary, the prediction submission is based on the strongest unsupervised model from the Task 2 pipeline, uses the assignment-approved sampling strategy for tractability, and preserves uncertainty explicitly where the discovered traffic structure does not justify a confident semantic label.
+
+\end{document}

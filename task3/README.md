@@ -16,13 +16,18 @@ Run the baseline supervised-model workflow with:
 /opt/homebrew/bin/python3.11 task3/q3_1a_baselines.py --train-path data/processed/<labeled-train-file> --test-path data/processed/<labeled-test-file>
 ```
 
-If your labeled files in `data/processed/` already contain `train` and `test` in their filenames, the explicit paths are optional:
+If you omit the explicit paths, the default workflow now:
+
+- trains on the labeled corpus under `data/test/`
+- evaluates the fitted models on the full labeled corpus under `data/raw_labeled/`
+
+If you instead have a pre-split pair of labeled files in `data/processed/` whose filenames already contain `train` and `test`, you can still point the script at them explicitly or rely on auto-discovery:
 
 ```bash
 /opt/homebrew/bin/python3.11 task3/q3_1a_baselines.py
 ```
 
-If no pre-split files exist yet, the script also falls back to recursively loading the labeled CSVs under `data/raw_labeled/` and creating a reproducible stratified train/test split automatically.
+If neither the dedicated corpora nor a pre-split pair are available, the script still falls back to recursively loading `data/raw_labeled/` and creating a reproducible stratified train/test split automatically.
 
 The script expects a label column such as `label`, `class`, `target`, `attack_label`, or `attack_type`. It trains:
 
@@ -59,9 +64,9 @@ Run the feature-importance workflow with:
 /opt/homebrew/bin/python3.11 task3/q3_1b_feature_importance.py --train-path data/processed/<labeled-train-file> --test-path data/processed/<labeled-test-file>
 ```
 
-By default, the script tries to reuse the strongest tree-based baseline from Question 3.1(a). If the serialized baseline model is missing, it retrains the selected tree model with the same baseline configuration and then extracts feature importances.
+By default, the script tries to reuse the strongest tree-based baseline from Question 3.1(a). If the serialized baseline model is missing, it retrains the selected tree model on `data/test/` and then extracts feature importances.
 
-Like Question 3.1(a), this script can also auto-build a train/test split from `data/raw_labeled/` when explicit or pre-split labeled datasets are not available.
+Like Question 3.1(a), this script defaults to the `data/test/` training corpus plus the full `data/raw_labeled/` evaluation corpus, with the older auto-split path still available as a fallback.
 
 Artifacts written by default:
 
@@ -112,6 +117,8 @@ The script retrains the best baseline family for this project, `RandomForest`, u
 - selective `SMOTE` oversampling
 - `class_weight="balanced"`
 - hybrid `SMOTE + random undersampling`
+
+By default, each strategy is fit on `data/test/` and evaluated on the full labeled corpus in `data/raw_labeled/`.
 
 Because the assignment warns that naive SMOTE over the full 6.8M-flow corpus is computationally prohibitive, the SMOTE-based strategies only oversample classes whose training counts fall below `--minority-target-count` (default `25000`). The hybrid strategy then caps the largest classes with random undersampling via `--hybrid-majority-cap` (default `250000`).
 
@@ -180,7 +187,7 @@ The workflow automatically:
 - creates an internal train/validation split for hyperparameter selection
 - searches the backbone, web-detector, and web-specialist hyperparameters
 - retrains the best hybrid model on the full Task 3 training set
-- reports all Question 3.1(a) metrics on the test set
+- reports all Question 3.1(a) metrics on the full evaluation corpus
 - compares the result with the best Question 3.2 strategy when those outputs are available
 - runs a 3-component ablation study
 - writes a report plus an architecture diagram
@@ -214,11 +221,12 @@ Run the router-level evaluation with:
 
 By default, the script:
 
-- reconstructs the same deterministic Task 3 test split from the saved Question 3.1(a) split manifest when available
+- evaluates the selected model on the full labeled evaluation corpus under `data/raw_labeled/`
 - auto-selects the best available model artifact across Questions 3.1(a), 3.2(a), and 3.3 using macro F1
-- evaluates that model router-by-router on the held-out test set
+- reuses the saved hybrid holdout manifest only when older Question 3.1(a) outputs require it
+- evaluates that model router-by-router on the chosen evaluation set
 - reports per-router summary metrics and per-router/per-class F1-scores
-- relates the hardest/easiest routers to their test-set class distributions
+- relates the hardest/easiest routers to their evaluation-set class distributions
 
 Artifacts written by default:
 
@@ -246,7 +254,7 @@ By default, the script:
 - auto-selects the best available model artifact across Questions 3.1(a), 3.2(a), and 3.3
 - retrains that model family on routers `D1` through `D7`
 - evaluates on the unseen routers `D8` through `D10`
-- compares the result against the standard Task 3 holdout metrics for the same model family
+- compares the result against the standard Task 3 evaluation metrics for the same model family
 - highlights classes that appear only in the unseen routers and reports their impact on generalization
 
 Useful optional flags:

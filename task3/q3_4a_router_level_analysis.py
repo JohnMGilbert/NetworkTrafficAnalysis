@@ -39,9 +39,11 @@ from src.common.logging_utils import configure_logging
 from src.common.paths import ensure_directory
 from src.common.seed import set_global_seed
 from task3.q3_1a_baselines import (
+    DEFAULT_EVALUATION_CORPUS_DIR,
     SOURCE_FILE_COLUMN,
     SOURCE_ROUTER_COLUMN,
     DEFAULT_LABELED_DATA_DIR,
+    DEFAULT_TRAINING_CORPUS_DIR,
     drop_missing_labels,
     infer_label_column,
     load_datasets_from_args,
@@ -95,7 +97,10 @@ def parse_args() -> argparse.Namespace:
         "--data-dir",
         type=Path,
         default=CONFIG.processed_data_dir,
-        help="Directory searched for labeled train/test files when explicit paths are omitted.",
+        help=(
+            "Directory searched for labeled train/test files when explicit paths are omitted "
+            "and dedicated training/evaluation corpora are unavailable."
+        ),
     )
     parser.add_argument(
         "--label-column",
@@ -104,31 +109,43 @@ def parse_args() -> argparse.Namespace:
         help="Optional explicit label column name.",
     )
     parser.add_argument(
+        "--training-corpus-dir",
+        type=Path,
+        default=DEFAULT_TRAINING_CORPUS_DIR,
+        help="Directory containing the labeled training corpus used when explicit train/test paths are omitted.",
+    )
+    parser.add_argument(
+        "--evaluation-corpus-dir",
+        type=Path,
+        default=DEFAULT_EVALUATION_CORPUS_DIR,
+        help="Directory containing the labeled evaluation corpus used when explicit train/test paths are omitted.",
+    )
+    parser.add_argument(
         "--labeled-data-dir",
         type=Path,
         default=DEFAULT_LABELED_DATA_DIR,
         help=(
-            "Directory searched recursively for labeled CSV/parquet files when explicit or "
-            "saved split metadata is unavailable."
+            "Legacy fallback directory searched recursively for labeled CSV/parquet files when "
+            "explicit paths, dedicated corpora, and saved split metadata are unavailable."
         ),
     )
     parser.add_argument(
         "--test-size",
         type=float,
         default=0.2,
-        help="Test-set fraction used when reconstructing row-split singleton files.",
+        help="Test-set fraction used only when reconstructing legacy row-split singleton files.",
     )
     parser.add_argument(
         "--split-strategy",
         choices=("row", "source_file", "router", "hybrid"),
         default="hybrid",
-        help="How to split an auto-discovered labeled corpus when a saved split manifest is unavailable.",
+        help="How to split the legacy auto-discovered labeled corpus when a saved split manifest is unavailable.",
     )
     parser.add_argument(
         "--q3-1a-summary-json",
         type=Path,
         default=CONFIG.outputs_dir / "task3" / "tables" / "q3_1a_summary.json",
-        help="Task 3.1(a) summary JSON used to reconstruct the default hybrid test split efficiently.",
+        help="Legacy Task 3.1(a) summary JSON used to reconstruct the saved hybrid test split when available.",
     )
     parser.add_argument(
         "--q3-1a-summary-csv",
@@ -248,7 +265,7 @@ def infer_router_labels(frame: pd.DataFrame) -> pd.DataFrame:
     else:
         raise ValueError(
             "Router-level analysis requires router metadata, but no usable router column was found. "
-            "Use the raw labeled corpus auto-split or include `router_id` / `_source_router_id` in the test data."
+            "Use the full labeled evaluation corpus or include `router_id` / `_source_router_id` in the test data."
         )
 
     enriched["router_label"] = router_source.map(router_label_from_value)
@@ -269,13 +286,26 @@ def attach_source_metadata(frame: pd.DataFrame, *, relative_name: str, path: Pat
 
 
 def can_use_saved_split_manifest(args: argparse.Namespace) -> bool:
-    return (
+    if not (
         args.train_path is None
         and args.test_path is None
         and args.random_seed == CONFIG.random_seed
         and abs(args.test_size - 0.2) < 1e-12
         and args.split_strategy == "hybrid"
         and args.q3_1a_summary_json.exists()
+    ):
+        return False
+
+    try:
+        summary_payload = json.loads(args.q3_1a_summary_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return False
+
+    test_groups = summary_payload.get("test_groups")
+    return (
+        str(summary_payload.get("split_strategy") or "") == "hybrid"
+        and isinstance(test_groups, list)
+        and bool(test_groups)
     )
 
 
@@ -331,11 +361,11 @@ def load_test_frame_from_saved_manifest(args: argparse.Namespace) -> tuple[pd.Da
 
 def load_test_frame(args: argparse.Namespace) -> tuple[pd.DataFrame, str, str]:
     if can_use_saved_split_manifest(args):
-        LOGGER.info("Reconstructing the Task 3 default test split from %s.", args.q3_1a_summary_json)
+        LOGGER.info("Reconstructing the legacy Task 3 hybrid test split from %s.", args.q3_1a_summary_json)
         return load_test_frame_from_saved_manifest(args)
 
     LOGGER.info(
-        "Saved split metadata is unavailable or incompatible with the requested settings. "
+        "Saved legacy split metadata is unavailable or incompatible with the requested settings. "
         "Falling back to the standard Task 3 dataset loader."
     )
     datasets = load_datasets_from_args(args)
@@ -776,7 +806,7 @@ def write_report(
     ]
     if missing_routers:
         lines.append(
-            "- Routers absent from the current standard holdout: "
+            "- Routers absent from the current evaluation set: "
             + ", ".join(missing_routers)
             + ". Their matrix rows are shown as `NA`."
         )
@@ -820,8 +850,8 @@ def write_report(
     )
     if missing_routers:
         lines.append(
-            "- Because the existing hybrid holdout omits some routers entirely, the easiest/hardest ranking above "
-            "is relative to the routers that actually appear in that evaluation split."
+            "- Because the current evaluation set omits some routers entirely, the easiest/hardest ranking above "
+            "is relative to the routers that actually appear in that evaluation slice."
         )
     lines.extend(
         [

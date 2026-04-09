@@ -32,8 +32,10 @@ from src.common.logging_utils import configure_logging
 from src.common.paths import ensure_directory
 from src.common.seed import set_global_seed
 from q3_1a_baselines import (
+    DEFAULT_EVALUATION_CORPUS_DIR,
     DEFAULT_LABELED_DATA_DIR,
     DEFAULT_SPLIT_STRATEGY,
+    DEFAULT_TRAINING_CORPUS_DIR,
     build_model_specs,
     build_preprocessor,
     drop_missing_labels,
@@ -73,7 +75,10 @@ def parse_args() -> argparse.Namespace:
         "--data-dir",
         type=Path,
         default=CONFIG.processed_data_dir,
-        help="Directory searched for labeled train/test files when explicit paths are omitted.",
+        help=(
+            "Directory searched for labeled train/test files when explicit paths are omitted "
+            "and dedicated training/evaluation corpora are unavailable."
+        ),
     )
     parser.add_argument(
         "--label-column",
@@ -82,25 +87,37 @@ def parse_args() -> argparse.Namespace:
         help="Optional explicit label column name.",
     )
     parser.add_argument(
+        "--training-corpus-dir",
+        type=Path,
+        default=DEFAULT_TRAINING_CORPUS_DIR,
+        help="Directory containing the labeled training corpus used when explicit train/test paths are omitted.",
+    )
+    parser.add_argument(
+        "--evaluation-corpus-dir",
+        type=Path,
+        default=DEFAULT_EVALUATION_CORPUS_DIR,
+        help="Directory containing the labeled evaluation corpus used when explicit train/test paths are omitted.",
+    )
+    parser.add_argument(
         "--labeled-data-dir",
         type=Path,
         default=DEFAULT_LABELED_DATA_DIR,
         help=(
-            "Directory searched recursively for labeled CSV/parquet files when an explicit or "
-            "pre-split train/test pair is unavailable."
+            "Legacy fallback directory searched recursively for labeled CSV/parquet files when "
+            "explicit paths, dedicated corpora, and pre-split datasets are unavailable."
         ),
     )
     parser.add_argument(
         "--test-size",
         type=float,
         default=0.2,
-        help="Test-set fraction used when auto-splitting a labeled corpus directory.",
+        help="Test-set fraction used only for the legacy auto-split fallback.",
     )
     parser.add_argument(
         "--split-strategy",
         choices=("row", "source_file", "router", "hybrid"),
         default=DEFAULT_SPLIT_STRATEGY,
-        help="How to split an auto-discovered labeled corpus before confusion-matrix analysis.",
+        help="How to split the legacy auto-discovered labeled corpus before confusion-matrix analysis.",
     )
     parser.add_argument(
         "--baseline-summary-path",

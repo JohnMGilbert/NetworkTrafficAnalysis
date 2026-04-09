@@ -55,7 +55,9 @@ TRAIN_KEYWORDS = ("train", "training")
 TEST_KEYWORDS = ("test", "testing", "holdout")
 METADATA_EXCLUSIONS = {"src_ip", "dst_ip", "timestamp", "_source_file", "_source_router_id"}
 ALLOWED_CATEGORICAL_FEATURES = {"router_id"}
-DEFAULT_LABELED_DATA_DIR = PROJECT_ROOT / "data" / "raw_labeled"
+DEFAULT_TRAINING_CORPUS_DIR = PROJECT_ROOT / "data" / "test"
+DEFAULT_EVALUATION_CORPUS_DIR = PROJECT_ROOT / "data" / "raw_labeled"
+DEFAULT_LABELED_DATA_DIR = DEFAULT_EVALUATION_CORPUS_DIR
 DEFAULT_SPLIT_STRATEGY = "hybrid"
 SOURCE_FILE_COLUMN = "_source_file"
 SOURCE_ROUTER_COLUMN = "_source_router_id"
@@ -97,7 +99,10 @@ def parse_args() -> argparse.Namespace:
         "--data-dir",
         type=Path,
         default=CONFIG.processed_data_dir,
-        help="Directory searched for labeled train/test files when explicit paths are omitted.",
+        help=(
+            "Directory searched for labeled train/test files when explicit paths are omitted "
+            "and dedicated training/evaluation corpora are unavailable."
+        ),
     )
     parser.add_argument(
         "--label-column",
@@ -106,26 +111,44 @@ def parse_args() -> argparse.Namespace:
         help="Optional explicit label column name.",
     )
     parser.add_argument(
+        "--training-corpus-dir",
+        type=Path,
+        default=DEFAULT_TRAINING_CORPUS_DIR,
+        help=(
+            "Directory containing the labeled CSV/parquet files used for Task 3 training when "
+            "explicit train/test paths are omitted."
+        ),
+    )
+    parser.add_argument(
+        "--evaluation-corpus-dir",
+        type=Path,
+        default=DEFAULT_EVALUATION_CORPUS_DIR,
+        help=(
+            "Directory containing the labeled CSV/parquet files used for Task 3 evaluation when "
+            "explicit train/test paths are omitted."
+        ),
+    )
+    parser.add_argument(
         "--labeled-data-dir",
         type=Path,
         default=DEFAULT_LABELED_DATA_DIR,
         help=(
-            "Directory searched recursively for labeled CSV/parquet files when an explicit or "
-            "pre-split train/test pair is unavailable."
+            "Legacy fallback directory searched recursively for labeled CSV/parquet files when "
+            "explicit paths, dedicated training/evaluation corpora, and pre-split datasets are unavailable."
         ),
     )
     parser.add_argument(
         "--test-size",
         type=float,
         default=0.2,
-        help="Test-set fraction used when auto-splitting a labeled corpus directory.",
+        help="Test-set fraction used only for the legacy auto-split fallback.",
     )
     parser.add_argument(
         "--split-strategy",
         choices=("row", "source_file", "router", "hybrid"),
         default=DEFAULT_SPLIT_STRATEGY,
         help=(
-            "How to split an auto-discovered labeled corpus. "
+            "How to split the legacy auto-discovered labeled corpus. "
             "'hybrid' keeps whole labeled source files together when possible and only splits rows "
             "within singleton-class files so all classes remain represented."
         ),
@@ -177,12 +200,12 @@ def discover_default_split_paths(data_dir: Path) -> tuple[Path, Path]:
     return train_candidates[0], test_candidates[0]
 
 
-def resolve_dataset_paths(args: argparse.Namespace) -> tuple[Path, Path]:
+def resolve_explicit_dataset_paths(args: argparse.Namespace) -> tuple[Path, Path] | None:
     if args.train_path and args.test_path:
         return args.train_path, args.test_path
     if args.train_path or args.test_path:
         raise ValueError("Provide both --train-path and --test-path, or omit both to use auto-discovery.")
-    return discover_default_split_paths(args.data_dir)
+    return None
 
 
 def list_recursive_data_files(data_dir: Path) -> list[Path]:
@@ -190,6 +213,12 @@ def list_recursive_data_files(data_dir: Path) -> list[Path]:
     for pattern in ("*.csv", "*.parquet"):
         files.extend(data_dir.rglob(pattern))
     return sorted(path for path in files if path.is_file())
+
+
+def directory_contains_labeled_files(data_dir: Path | None) -> bool:
+    if data_dir is None or not data_dir.exists():
+        return False
+    return bool(list_recursive_data_files(data_dir))
 
 
 def read_dataset(path: Path) -> pd.DataFrame:
@@ -275,6 +304,26 @@ def load_labeled_corpus(
     combined = pd.concat(frames, ignore_index=True, sort=False)
     manifest = pd.DataFrame(manifest_rows).sort_values(SOURCE_FILE_COLUMN).reset_index(drop=True)
     return combined, manifest, resolved_label_column
+
+
+def load_corpus_directory(
+    data_dir: Path,
+    *,
+    label_column: str | None,
+    split_name: str,
+) -> tuple[pd.DataFrame, pd.DataFrame, str]:
+    combined, manifest, inferred_label_column = load_labeled_corpus(
+        data_dir,
+        label_column=label_column,
+    )
+    LOGGER.info(
+        "Loaded %s rows across %s labeled files from %s for the %s corpus.",
+        len(combined),
+        len(manifest),
+        data_dir,
+        split_name,
+    )
+    return combined.reset_index(drop=True), manifest, inferred_label_column
 
 
 def choose_balanced_label_subsets(
@@ -544,12 +593,88 @@ def auto_split_labeled_directory(
     )
 
 
+def resolve_corpus_directories(args: argparse.Namespace) -> tuple[Path, Path] | None:
+    training_corpus_dir = getattr(args, "training_corpus_dir", DEFAULT_TRAINING_CORPUS_DIR)
+    evaluation_corpus_dir = getattr(args, "evaluation_corpus_dir", DEFAULT_EVALUATION_CORPUS_DIR)
+
+    if not directory_contains_labeled_files(training_corpus_dir):
+        return None
+    if not directory_contains_labeled_files(evaluation_corpus_dir):
+        return None
+
+    return training_corpus_dir, evaluation_corpus_dir
+
+
+def load_separate_corpora(
+    training_corpus_dir: Path,
+    evaluation_corpus_dir: Path,
+    *,
+    label_column: str | None,
+) -> DatasetBundle:
+    train_frame, train_manifest, train_label_column = load_corpus_directory(
+        training_corpus_dir,
+        label_column=label_column,
+        split_name="training",
+    )
+    test_frame, test_manifest, test_label_column = load_corpus_directory(
+        evaluation_corpus_dir,
+        label_column=label_column,
+        split_name="evaluation",
+    )
+
+    if train_label_column != test_label_column:
+        raise ValueError(
+            "The training and evaluation corpora use different label columns: "
+            f"{training_corpus_dir} -> {train_label_column}, "
+            f"{evaluation_corpus_dir} -> {test_label_column}."
+        )
+
+    return DatasetBundle(
+        train_frame=train_frame.reset_index(drop=True),
+        test_frame=test_frame.reset_index(drop=True),
+        train_source=f"{training_corpus_dir} [training corpus; files={len(train_manifest)}]",
+        test_source=f"{evaluation_corpus_dir} [full evaluation corpus; files={len(test_manifest)}]",
+        split_strategy="separate_corpora",
+        train_groups=[],
+        test_groups=[],
+    )
+
+
 def load_datasets_from_args(args: argparse.Namespace) -> DatasetBundle:
+    explicit_paths = resolve_explicit_dataset_paths(args)
+    if explicit_paths is not None:
+        train_path, test_path = explicit_paths
+        LOGGER.info("Loading training data from %s", train_path)
+        train_frame = read_dataset(train_path)
+        LOGGER.info("Loading test data from %s", test_path)
+        test_frame = read_dataset(test_path)
+        return DatasetBundle(
+            train_frame=train_frame,
+            test_frame=test_frame,
+            train_source=str(train_path),
+            test_source=str(test_path),
+            split_strategy="explicit_paths",
+            train_groups=[],
+            test_groups=[],
+        )
+
+    corpus_directories = resolve_corpus_directories(args)
+    if corpus_directories is not None:
+        training_corpus_dir, evaluation_corpus_dir = corpus_directories
+        LOGGER.info(
+            "Using dedicated Task 3 corpora: train on %s and evaluate on %s.",
+            training_corpus_dir,
+            evaluation_corpus_dir,
+        )
+        return load_separate_corpora(
+            training_corpus_dir,
+            evaluation_corpus_dir,
+            label_column=args.label_column,
+        )
+
     try:
-        train_path, test_path = resolve_dataset_paths(args)
+        train_path, test_path = discover_default_split_paths(args.data_dir)
     except FileNotFoundError:
-        if args.train_path or args.test_path:
-            raise
         return auto_split_labeled_directory(
             args.labeled_data_dir,
             label_column=args.label_column,
@@ -567,7 +692,7 @@ def load_datasets_from_args(args: argparse.Namespace) -> DatasetBundle:
         test_frame=test_frame,
         train_source=str(train_path),
         test_source=str(test_path),
-        split_strategy="explicit_paths",
+        split_strategy="processed_split",
         train_groups=[],
         test_groups=[],
     )
@@ -893,7 +1018,11 @@ def write_report(
         "## Data Summary",
         f"- Training dataset: `{train_source}` ({train_rows:,} rows)",
         f"- Test dataset: `{test_source}` ({test_rows:,} rows)",
-        f"- Split strategy: `{split_strategy}`",
+        (
+            f"- Dataset loading mode: `{split_strategy}`"
+            if split_strategy == "separate_corpora"
+            else f"- Split strategy: `{split_strategy}`"
+        ),
         f"- Label column: `{label_column}`",
         f"- Numeric feature count: {len(numeric_columns)}",
         f"- Categorical feature count: {len(categorical_columns)}",
