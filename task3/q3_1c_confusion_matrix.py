@@ -98,7 +98,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--split-strategy",
-        choices=("row", "source_file", "router"),
+        choices=("row", "source_file", "router", "hybrid"),
         default=DEFAULT_SPLIT_STRATEGY,
         help="How to split an auto-discovered labeled corpus before confusion-matrix analysis.",
     )

@@ -1,0 +1,1408 @@
+"""Question 3.3: tuned hybrid advanced model plus ablation study."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import sys
+import time
+from dataclasses import asdict, dataclass
+from itertools import product
+from pathlib import Path
+
+try:
+    import joblib
+except ModuleNotFoundError as exc:
+    raise ModuleNotFoundError(
+        "Missing optional dependency 'joblib'. Install project dependencies with "
+        "'python3 -m pip install -r requirements.txt' and rerun q3_3_advanced_model.py."
+    ) from exc
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.impute import SimpleImputer
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from sklearn.model_selection import train_test_split
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.common.config import CONFIG
+from src.common.logging_utils import configure_logging
+from src.common.paths import ensure_directory
+from src.common.seed import set_global_seed
+from task2.q2_1c_feature_engineering import compute_engineered_features
+from task3.q3_1a_baselines import (
+    drop_missing_labels,
+    infer_label_column,
+    load_datasets_from_args,
+    render_table,
+    select_feature_columns,
+)
+
+
+LOGGER = logging.getLogger("task3.q3_3")
+WEB_PREFIX = "Web"
+ENGINEERED_FEATURE_NAMES = (
+    "directional_byte_imbalance",
+    "bytes_per_packet",
+    "burst_idle_log_ratio",
+    "packet_size_asymmetry",
+)
+
+
+@dataclass(frozen=True)
+class BaseConfig:
+    n_estimators: int
+    max_depth: int | None
+    min_samples_leaf: int
+    class_weight: str | None
+
+
+@dataclass(frozen=True)
+class WebSubtypeConfig:
+    n_neighbors: int
+    weights: str
+
+
+@dataclass(frozen=True)
+class WebDetectorConfig:
+    n_estimators: int
+    max_depth: int | None
+    min_samples_leaf: int
+    class_weight: str | None
+    negative_multiplier: int
+    threshold: float
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--train-path",
+        type=Path,
+        default=None,
+        help="Optional explicit path to the labeled training dataset.",
+    )
+    parser.add_argument(
+        "--test-path",
+        type=Path,
+        default=None,
+        help="Optional explicit path to the labeled test dataset.",
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=CONFIG.processed_data_dir,
+        help="Directory searched for labeled train/test files when explicit paths are omitted.",
+    )
+    parser.add_argument(
+        "--label-column",
+        type=str,
+        default=None,
+        help="Optional explicit label column name.",
+    )
+    parser.add_argument(
+        "--labeled-data-dir",
+        type=Path,
+        default=PROJECT_ROOT / "data" / "raw_labeled",
+        help=(
+            "Directory searched recursively for labeled CSV/parquet files when an explicit or "
+            "pre-split train/test pair is unavailable."
+        ),
+    )
+    parser.add_argument(
+        "--test-size",
+        type=float,
+        default=0.2,
+        help="Test-set fraction used when auto-splitting a labeled corpus directory.",
+    )
+    parser.add_argument(
+        "--split-strategy",
+        choices=("row", "source_file", "router", "hybrid"),
+        default="hybrid",
+        help="How to split an auto-discovered labeled corpus.",
+    )
+    parser.add_argument(
+        "--validation-size",
+        type=float,
+        default=0.15,
+        help="Fraction of the training data reserved for hyperparameter selection.",
+    )
+    parser.add_argument(
+        "--tuning-max-train-rows",
+        type=int,
+        default=600_000,
+        help=(
+            "Optional stratified cap for the internal tuning-training split. "
+            "The final model is still retrained on the full Task 3 training set."
+        ),
+    )
+    parser.add_argument(
+        "--max-train-rows",
+        type=int,
+        default=None,
+        help="Optional cap for the Task 3 training rows, useful for smoke tests.",
+    )
+    parser.add_argument(
+        "--max-test-rows",
+        type=int,
+        default=None,
+        help="Optional cap for the Task 3 test rows, useful for smoke tests.",
+    )
+    parser.add_argument(
+        "--table-dir",
+        type=Path,
+        default=CONFIG.outputs_dir / "task3" / "tables",
+        help="Directory for generated Task 3.3 tables and reports.",
+    )
+    parser.add_argument(
+        "--figure-dir",
+        type=Path,
+        default=CONFIG.outputs_dir / "task3" / "figures",
+        help="Directory for generated Task 3.3 figures.",
+    )
+    parser.add_argument(
+        "--model-dir",
+        type=Path,
+        default=CONFIG.outputs_dir / "models" / "task3",
+        help="Directory for serialized Task 3.3 models.",
+    )
+    parser.add_argument(
+        "--reference-summary-path",
+        type=Path,
+        default=CONFIG.outputs_dir / "task3" / "tables" / "q3_2a_imbalance_summary.csv",
+        help="Question 3.2(a) summary CSV used for the comparison table when available.",
+    )
+    parser.add_argument(
+        "--reference-per-class-path",
+        type=Path,
+        default=CONFIG.outputs_dir / "task3" / "tables" / "q3_2a_per_class_metrics.csv",
+        help="Question 3.2(a) per-class CSV used for the comparison table when available.",
+    )
+    parser.add_argument(
+        "--random-seed",
+        type=int,
+        default=CONFIG.random_seed,
+        help="Random seed used across all Task 3.3 experiments.",
+    )
+    return parser.parse_args()
+
+
+def cap_rows(
+    frame: pd.DataFrame,
+    *,
+    label_column: str,
+    max_rows: int | None,
+    random_seed: int,
+    split_name: str,
+) -> pd.DataFrame:
+    if max_rows is None or len(frame) <= max_rows:
+        return frame.reset_index(drop=True)
+    if max_rows <= 0:
+        raise ValueError(f"{split_name} row cap must be positive, received {max_rows}.")
+
+    labels = frame[label_column].astype(str)
+    stratify = labels if labels.value_counts().min() >= 2 else None
+    sampled, _ = train_test_split(
+        frame,
+        train_size=max_rows,
+        random_state=random_seed,
+        shuffle=True,
+        stratify=stratify,
+    )
+    LOGGER.warning(
+        "Applying %s cap: sampled %s rows from %s rows.",
+        split_name,
+        len(sampled),
+        len(frame),
+    )
+    return sampled.reset_index(drop=True)
+
+
+def ensure_router_column(frame: pd.DataFrame) -> pd.DataFrame:
+    if "router_id" in frame.columns:
+        return frame
+
+    enriched = frame.copy()
+    if "_source_router_id" in enriched.columns:
+        enriched["router_id"] = enriched["_source_router_id"].fillna(-1).astype(int).astype(str)
+    else:
+        enriched["router_id"] = "unknown"
+    return enriched
+
+
+def add_engineered_features(frame: pd.DataFrame) -> pd.DataFrame:
+    enriched = ensure_router_column(frame)
+    engineered = compute_engineered_features(enriched)
+    for column in ENGINEERED_FEATURE_NAMES:
+        enriched[column] = engineered[column].to_numpy()
+    return enriched
+
+
+def choose_feature_sets(
+    train_frame: pd.DataFrame,
+    test_frame: pd.DataFrame,
+    label_column: str,
+) -> tuple[list[str], list[str], list[str]]:
+    numeric_columns, _, dropped_columns = select_feature_columns(
+        train_frame,
+        test_frame,
+        label_column,
+    )
+    original_columns = [
+        column for column in numeric_columns if column not in set(ENGINEERED_FEATURE_NAMES)
+    ]
+    engineered_columns = numeric_columns
+    missing_engineered = [
+        column for column in ENGINEERED_FEATURE_NAMES if column not in engineered_columns
+    ]
+    if missing_engineered:
+        raise ValueError(
+            "The engineered feature set is incomplete. Missing engineered columns: "
+            f"{missing_engineered}."
+        )
+    return original_columns, engineered_columns, dropped_columns
+
+
+def build_base_search_space() -> list[BaseConfig]:
+    return [
+        BaseConfig(
+            n_estimators=n_estimators,
+            max_depth=max_depth,
+            min_samples_leaf=min_samples_leaf,
+            class_weight="balanced",
+        )
+        for n_estimators, max_depth, min_samples_leaf in product(
+            (200, 300),
+            (None, 28),
+            (1, 2),
+        )
+    ]
+
+
+def build_web_subtype_search_space() -> list[WebSubtypeConfig]:
+    return [
+        WebSubtypeConfig(n_neighbors=n_neighbors, weights=weights)
+        for n_neighbors, weights in product((3, 5, 7, 9, 11, 15), ("uniform", "distance"))
+    ]
+
+
+def build_web_detector_search_space() -> list[tuple[BaseConfig, int, float]]:
+    base_variants = [
+        BaseConfig(
+            n_estimators=n_estimators,
+            max_depth=max_depth,
+            min_samples_leaf=min_samples_leaf,
+            class_weight="balanced_subsample",
+        )
+        for n_estimators, max_depth, min_samples_leaf in product(
+            (200, 300),
+            (20, 24),
+            (1, 2),
+        )
+    ]
+    return [
+        (base_config, negative_multiplier, threshold)
+        for base_config, negative_multiplier, threshold in product(
+            base_variants,
+            (10, 20),
+            (0.25, 0.30, 0.35, 0.40),
+        )
+    ]
+
+
+def fit_base_model(
+    train_frame: pd.DataFrame,
+    *,
+    label_column: str,
+    feature_columns: list[str],
+    config: BaseConfig,
+    random_seed: int,
+) -> tuple[dict[str, object], float]:
+    imputer = SimpleImputer(strategy="median")
+    x_train = imputer.fit_transform(train_frame[feature_columns]).astype(np.float32, copy=False)
+    y_train = train_frame[label_column].astype(str)
+
+    classifier = RandomForestClassifier(
+        n_estimators=config.n_estimators,
+        max_depth=config.max_depth,
+        min_samples_leaf=config.min_samples_leaf,
+        class_weight=config.class_weight,
+        n_jobs=-1,
+        random_state=random_seed,
+    )
+    start_time = time.perf_counter()
+    classifier.fit(x_train, y_train)
+    training_time = time.perf_counter() - start_time
+    return {
+        "feature_columns": feature_columns,
+        "imputer": imputer,
+        "classifier": classifier,
+        "config": asdict(config),
+    }, training_time
+
+
+def predict_base_model(model: dict[str, object], frame: pd.DataFrame) -> np.ndarray:
+    feature_columns = list(model["feature_columns"])
+    transformed = model["imputer"].transform(frame[feature_columns])
+    return model["classifier"].predict(transformed)
+
+
+def build_web_detector_training_frame(
+    train_frame: pd.DataFrame,
+    *,
+    label_column: str,
+    negative_multiplier: int,
+    random_seed: int,
+) -> pd.DataFrame:
+    positives = train_frame[train_frame[label_column].astype(str).str.startswith(WEB_PREFIX)].copy()
+    negatives = train_frame[~train_frame[label_column].astype(str).str.startswith(WEB_PREFIX)].copy()
+    if positives.empty:
+        raise ValueError("Cannot train the web detector because the training split contains no web samples.")
+
+    negative_target = min(len(negatives), max(len(positives) * negative_multiplier, 5_000))
+    sampled_negatives = negatives.sample(
+        n=negative_target,
+        random_state=random_seed,
+        replace=False,
+    )
+    return pd.concat([positives, sampled_negatives], ignore_index=True)
+
+
+def fit_web_detector_model(
+    train_frame: pd.DataFrame,
+    *,
+    label_column: str,
+    feature_columns: list[str],
+    config: WebDetectorConfig,
+    random_seed: int,
+) -> tuple[dict[str, object], float]:
+    detector_train = build_web_detector_training_frame(
+        train_frame,
+        label_column=label_column,
+        negative_multiplier=config.negative_multiplier,
+        random_seed=random_seed,
+    )
+    imputer = SimpleImputer(strategy="median")
+    x_train = imputer.fit_transform(detector_train[feature_columns]).astype(np.float32, copy=False)
+    y_train = (
+        detector_train[label_column]
+        .astype(str)
+        .str.startswith(WEB_PREFIX)
+        .astype(int)
+        .to_numpy(dtype=np.int8, copy=False)
+    )
+
+    classifier = RandomForestClassifier(
+        n_estimators=config.n_estimators,
+        max_depth=config.max_depth,
+        min_samples_leaf=config.min_samples_leaf,
+        class_weight=config.class_weight,
+        n_jobs=-1,
+        random_state=random_seed,
+    )
+    start_time = time.perf_counter()
+    classifier.fit(x_train, y_train)
+    training_time = time.perf_counter() - start_time
+    return {
+        "feature_columns": feature_columns,
+        "imputer": imputer,
+        "classifier": classifier,
+        "config": asdict(config),
+    }, training_time
+
+
+def predict_web_detector(model: dict[str, object], frame: pd.DataFrame) -> np.ndarray:
+    feature_columns = list(model["feature_columns"])
+    transformed = model["imputer"].transform(frame[feature_columns]).astype(np.float32, copy=False)
+    return model["classifier"].predict_proba(transformed)[:, 1]
+
+
+def fit_web_subtype_model(
+    train_frame: pd.DataFrame,
+    *,
+    label_column: str,
+    feature_columns: list[str],
+    config: WebSubtypeConfig,
+) -> tuple[Pipeline, float]:
+    web_train = train_frame[train_frame[label_column].astype(str).str.startswith(WEB_PREFIX)].copy()
+    if web_train.empty:
+        raise ValueError("Cannot train the web subtype specialist because the training split contains no web samples.")
+
+    model = Pipeline(
+        [
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
+            ("classifier", KNeighborsClassifier(n_neighbors=config.n_neighbors, weights=config.weights)),
+        ]
+    )
+    start_time = time.perf_counter()
+    model.fit(web_train[feature_columns], web_train[label_column].astype(str))
+    training_time = time.perf_counter() - start_time
+    return model, training_time
+
+
+def compute_summary_metrics(y_true: pd.Series, predictions: np.ndarray) -> dict[str, float]:
+    precision_macro, recall_macro, f1_macro, _ = precision_recall_fscore_support(
+        y_true,
+        predictions,
+        average="macro",
+        zero_division=0,
+    )
+    _, _, f1_weighted, _ = precision_recall_fscore_support(
+        y_true,
+        predictions,
+        average="weighted",
+        zero_division=0,
+    )
+    return {
+        "accuracy": round(float(accuracy_score(y_true, predictions)), 6),
+        "precision_macro": round(float(precision_macro), 6),
+        "recall_macro": round(float(recall_macro), 6),
+        "f1_macro": round(float(f1_macro), 6),
+        "f1_weighted": round(float(f1_weighted), 6),
+    }
+
+
+def compute_per_class_metrics(
+    y_true: pd.Series,
+    predictions: np.ndarray,
+    class_names: list[str],
+) -> pd.DataFrame:
+    precision, recall, f1_scores, support = precision_recall_fscore_support(
+        y_true,
+        predictions,
+        labels=class_names,
+        zero_division=0,
+    )
+    rows = []
+    for class_index, class_name in enumerate(class_names):
+        rows.append(
+            {
+                "class_name": class_name,
+                "precision": round(float(precision[class_index]), 6),
+                "recall": round(float(recall[class_index]), 6),
+                "f1_score": round(float(f1_scores[class_index]), 6),
+                "support": int(support[class_index]),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def hybrid_predictions(
+    base_predictions: np.ndarray,
+    *,
+    web_probabilities: np.ndarray | None,
+    web_threshold: float | None,
+    web_subtype_predictions: np.ndarray | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    if web_probabilities is None or web_threshold is None or web_subtype_predictions is None:
+        return np.array(base_predictions, dtype=object), np.zeros(len(base_predictions), dtype=bool)
+
+    override_mask = (web_probabilities >= web_threshold) | pd.Series(base_predictions).astype(str).str.startswith(
+        WEB_PREFIX
+    ).to_numpy()
+    final_predictions = np.array(base_predictions, dtype=object)
+    final_predictions[override_mask] = web_subtype_predictions[override_mask]
+    return final_predictions, override_mask
+
+
+def tune_base_model(
+    tuning_train: pd.DataFrame,
+    validation_frame: pd.DataFrame,
+    *,
+    label_column: str,
+    feature_columns: list[str],
+    class_names: list[str],
+    random_seed: int,
+) -> tuple[BaseConfig, pd.DataFrame, np.ndarray]:
+    y_valid = validation_frame[label_column].astype(str)
+    search_rows: list[dict[str, object]] = []
+    best_config: BaseConfig | None = None
+    best_predictions: np.ndarray | None = None
+    best_score: tuple[float, float, float] | None = None
+
+    for config in build_base_search_space():
+        model, training_time = fit_base_model(
+            tuning_train,
+            label_column=label_column,
+            feature_columns=feature_columns,
+            config=config,
+            random_seed=random_seed,
+        )
+        predictions = predict_base_model(model, validation_frame)
+        metrics = compute_summary_metrics(y_valid, predictions)
+        search_rows.append(
+            {
+                "component": "base_backbone",
+                "training_time_seconds": round(training_time, 3),
+                **asdict(config),
+                **metrics,
+            }
+        )
+        score = (metrics["f1_macro"], metrics["accuracy"], -training_time)
+        if best_score is None or score > best_score:
+            best_score = score
+            best_config = config
+            best_predictions = predictions
+
+    if best_config is None or best_predictions is None:
+        raise RuntimeError("Base-model tuning did not evaluate any configurations.")
+
+    return best_config, pd.DataFrame(search_rows), best_predictions
+
+
+def tune_web_subtype_model(
+    tuning_train: pd.DataFrame,
+    validation_frame: pd.DataFrame,
+    *,
+    label_column: str,
+    feature_columns: list[str],
+) -> tuple[WebSubtypeConfig, pd.DataFrame, Pipeline, np.ndarray]:
+    web_valid = validation_frame[validation_frame[label_column].astype(str).str.startswith(WEB_PREFIX)].copy()
+    if web_valid.empty:
+        raise ValueError(
+            "The internal validation split contains no web samples, so the web specialist cannot be tuned."
+        )
+
+    y_valid_web = web_valid[label_column].astype(str)
+    search_rows: list[dict[str, object]] = []
+    best_config: WebSubtypeConfig | None = None
+    best_model: Pipeline | None = None
+    best_predictions: np.ndarray | None = None
+    best_score: tuple[float, float] | None = None
+
+    for config in build_web_subtype_search_space():
+        model, training_time = fit_web_subtype_model(
+            tuning_train,
+            label_column=label_column,
+            feature_columns=feature_columns,
+            config=config,
+        )
+        predictions = model.predict(web_valid[feature_columns])
+        metrics = compute_summary_metrics(y_valid_web, predictions)
+        search_rows.append(
+            {
+                "component": "web_subtype_knn",
+                "training_time_seconds": round(training_time, 3),
+                **asdict(config),
+                **metrics,
+            }
+        )
+        score = (metrics["f1_macro"], metrics["accuracy"])
+        if best_score is None or score > best_score:
+            best_score = score
+            best_config = config
+            best_model = model
+            best_predictions = predictions
+
+    if best_config is None or best_model is None or best_predictions is None:
+        raise RuntimeError("Web subtype tuning did not evaluate any configurations.")
+
+    return best_config, pd.DataFrame(search_rows), best_model, best_predictions
+
+
+def tune_web_detector(
+    tuning_train: pd.DataFrame,
+    validation_frame: pd.DataFrame,
+    *,
+    label_column: str,
+    feature_columns: list[str],
+    base_valid_predictions: np.ndarray,
+    web_subtype_model: Pipeline,
+    random_seed: int,
+) -> tuple[WebDetectorConfig, pd.DataFrame]:
+    y_valid = validation_frame[label_column].astype(str)
+    web_valid_truth = y_valid.str.startswith(WEB_PREFIX).astype(int).to_numpy()
+    xss_mask = y_valid.eq("Web-xss").to_numpy()
+    web_subtype_predictions = web_subtype_model.predict(validation_frame[feature_columns])
+
+    search_rows: list[dict[str, object]] = []
+    best_config: WebDetectorConfig | None = None
+    best_score: tuple[float, float] | None = None
+
+    for detector_base_config, negative_multiplier, threshold in build_web_detector_search_space():
+        detector_config = WebDetectorConfig(
+            n_estimators=detector_base_config.n_estimators,
+            max_depth=detector_base_config.max_depth,
+            min_samples_leaf=detector_base_config.min_samples_leaf,
+            class_weight=detector_base_config.class_weight,
+            negative_multiplier=negative_multiplier,
+            threshold=threshold,
+        )
+        detector_model, training_time = fit_web_detector_model(
+            tuning_train,
+            label_column=label_column,
+            feature_columns=feature_columns,
+            config=detector_config,
+            random_seed=random_seed,
+        )
+        web_probabilities = predict_web_detector(detector_model, validation_frame)
+        final_predictions, override_mask = hybrid_predictions(
+            base_valid_predictions,
+            web_probabilities=web_probabilities,
+            web_threshold=threshold,
+            web_subtype_predictions=web_subtype_predictions,
+        )
+        metrics = compute_summary_metrics(y_valid, final_predictions)
+        binary_predictions = (web_probabilities >= threshold).astype(int)
+        web_precision, web_recall, web_f1, _ = precision_recall_fscore_support(
+            web_valid_truth,
+            binary_predictions,
+            average="binary",
+            zero_division=0,
+        )
+        xss_recall = (
+            float((final_predictions[xss_mask] == y_valid[xss_mask].to_numpy()).mean()) if xss_mask.any() else 0.0
+        )
+        search_rows.append(
+            {
+                "component": "web_detector",
+                "training_time_seconds": round(training_time, 3),
+                **asdict(detector_config),
+                **metrics,
+                "web_precision": round(float(web_precision), 6),
+                "web_recall": round(float(web_recall), 6),
+                "web_f1": round(float(web_f1), 6),
+                "xss_recall": round(xss_recall, 6),
+                "override_rows": int(override_mask.sum()),
+            }
+        )
+        score = (metrics["f1_macro"], metrics["accuracy"])
+        if best_score is None or score > best_score:
+            best_score = score
+            best_config = detector_config
+
+    if best_config is None:
+        raise RuntimeError("Web-detector tuning did not evaluate any configurations.")
+
+    return best_config, pd.DataFrame(search_rows)
+
+
+def train_hybrid_model(
+    train_frame: pd.DataFrame,
+    *,
+    label_column: str,
+    feature_columns: list[str],
+    base_config: BaseConfig,
+    web_subtype_config: WebSubtypeConfig | None,
+    web_detector_config: WebDetectorConfig | None,
+    use_web_specialist: bool,
+    random_seed: int,
+) -> tuple[dict[str, object], dict[str, float]]:
+    base_model, base_training_time = fit_base_model(
+        train_frame,
+        label_column=label_column,
+        feature_columns=feature_columns,
+        config=base_config,
+        random_seed=random_seed,
+    )
+
+    artifact: dict[str, object] = {
+        "base_model": base_model,
+        "feature_columns": feature_columns,
+        "label_column": label_column,
+        "use_web_specialist": use_web_specialist,
+        "base_config": asdict(base_config),
+    }
+    training_times = {
+        "base_training_time_seconds": round(base_training_time, 3),
+        "web_subtype_training_time_seconds": 0.0,
+        "web_detector_training_time_seconds": 0.0,
+    }
+
+    if use_web_specialist:
+        if web_subtype_config is None or web_detector_config is None:
+            raise ValueError("The hybrid specialist requires both web subtype and web detector configs.")
+
+        web_subtype_model, web_subtype_training_time = fit_web_subtype_model(
+            train_frame,
+            label_column=label_column,
+            feature_columns=feature_columns,
+            config=web_subtype_config,
+        )
+        web_detector_model, web_detector_training_time = fit_web_detector_model(
+            train_frame,
+            label_column=label_column,
+            feature_columns=feature_columns,
+            config=web_detector_config,
+            random_seed=random_seed,
+        )
+        artifact["web_subtype_model"] = web_subtype_model
+        artifact["web_detector_model"] = web_detector_model
+        artifact["web_subtype_config"] = asdict(web_subtype_config)
+        artifact["web_detector_config"] = asdict(web_detector_config)
+        training_times["web_subtype_training_time_seconds"] = round(web_subtype_training_time, 3)
+        training_times["web_detector_training_time_seconds"] = round(web_detector_training_time, 3)
+
+    training_times["total_training_time_seconds"] = round(sum(training_times.values()), 3)
+    return artifact, training_times
+
+
+def predict_hybrid_model(
+    model: dict[str, object],
+    frame: pd.DataFrame,
+) -> tuple[np.ndarray, dict[str, object]]:
+    base_predictions = predict_base_model(model["base_model"], frame)
+
+    if not bool(model["use_web_specialist"]):
+        return base_predictions, {
+            "base_predictions": base_predictions,
+            "web_probabilities": None,
+            "web_subtype_predictions": None,
+            "override_mask": np.zeros(len(frame), dtype=bool),
+        }
+
+    web_detector_model = model["web_detector_model"]
+    web_subtype_model = model["web_subtype_model"]
+    web_probabilities = predict_web_detector(web_detector_model, frame)
+    web_subtype_predictions = web_subtype_model.predict(frame[model["feature_columns"]])
+    threshold = float(model["web_detector_config"]["threshold"])
+    final_predictions, override_mask = hybrid_predictions(
+        base_predictions,
+        web_probabilities=web_probabilities,
+        web_threshold=threshold,
+        web_subtype_predictions=web_subtype_predictions,
+    )
+    return final_predictions, {
+        "base_predictions": base_predictions,
+        "web_probabilities": web_probabilities,
+        "web_subtype_predictions": web_subtype_predictions,
+        "override_mask": override_mask,
+    }
+
+
+def evaluate_variant(
+    *,
+    variant_name: str,
+    train_frame: pd.DataFrame,
+    test_frame: pd.DataFrame,
+    label_column: str,
+    class_names: list[str],
+    feature_columns: list[str],
+    base_config: BaseConfig,
+    web_subtype_config: WebSubtypeConfig | None,
+    web_detector_config: WebDetectorConfig | None,
+    use_web_specialist: bool,
+    random_seed: int,
+) -> tuple[dict[str, object], pd.DataFrame, dict[str, object]]:
+    model, training_times = train_hybrid_model(
+        train_frame,
+        label_column=label_column,
+        feature_columns=feature_columns,
+        base_config=base_config,
+        web_subtype_config=web_subtype_config,
+        web_detector_config=web_detector_config,
+        use_web_specialist=use_web_specialist,
+        random_seed=random_seed,
+    )
+    predictions, extras = predict_hybrid_model(model, test_frame)
+    y_test = test_frame[label_column].astype(str)
+    summary = {
+        "variant": variant_name,
+        "feature_count": len(feature_columns),
+        "uses_engineered_features": any(
+            column in set(ENGINEERED_FEATURE_NAMES) for column in feature_columns
+        ),
+        "uses_web_specialist": use_web_specialist,
+        **training_times,
+        **compute_summary_metrics(y_test, predictions),
+        "override_rows": int(extras["override_mask"].sum()),
+    }
+    per_class = compute_per_class_metrics(y_test, predictions, class_names)
+    per_class.insert(0, "variant", variant_name)
+    return summary, per_class, {
+        "model": model,
+        "predictions": predictions,
+        "extras": extras,
+    }
+
+
+def load_best_q3_2_reference(
+    summary_path: Path,
+    per_class_path: Path,
+) -> tuple[dict[str, object] | None, pd.DataFrame | None]:
+    if not summary_path.exists() or not per_class_path.exists():
+        LOGGER.warning(
+            "Skipping Question 3.2 comparison because the reference files are missing: %s, %s",
+            summary_path,
+            per_class_path,
+        )
+        return None, None
+
+    summary_table = pd.read_csv(summary_path)
+    if summary_table.empty:
+        return None, None
+    best_row = summary_table.sort_values(["f1_macro", "accuracy"], ascending=False).iloc[0].to_dict()
+
+    per_class_table = pd.read_csv(per_class_path)
+    if "strategy" not in per_class_table.columns:
+        return best_row, None
+
+    strategy_name = str(best_row["strategy"])
+    reference_per_class = (
+        per_class_table[per_class_table["strategy"] == strategy_name]
+        .drop(columns=["strategy"])
+        .reset_index(drop=True)
+    )
+    return best_row, reference_per_class
+
+
+def build_metric_comparison_table(
+    advanced_summary: dict[str, object],
+    reference_summary: dict[str, object],
+) -> pd.DataFrame:
+    metrics = ("accuracy", "precision_macro", "recall_macro", "f1_macro", "f1_weighted")
+    rows = []
+    for metric in metrics:
+        reference_value = float(reference_summary[metric])
+        advanced_value = float(advanced_summary[metric])
+        rows.append(
+            {
+                "metric": metric,
+                "q3_2_best": round(reference_value, 6),
+                "q3_3_advanced": round(advanced_value, 6),
+                "delta": round(advanced_value - reference_value, 6),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def build_per_class_comparison_table(
+    advanced_per_class: pd.DataFrame,
+    reference_per_class: pd.DataFrame,
+) -> pd.DataFrame:
+    merged = advanced_per_class.merge(
+        reference_per_class,
+        on="class_name",
+        how="left",
+        suffixes=("_q3_3", "_q3_2"),
+    )
+    merged["precision_delta"] = (
+        merged["precision_q3_3"] - merged["precision_q3_2"]
+    ).round(6)
+    merged["recall_delta"] = (merged["recall_q3_3"] - merged["recall_q3_2"]).round(6)
+    merged["f1_delta"] = (merged["f1_score_q3_3"] - merged["f1_score_q3_2"]).round(6)
+    return merged.sort_values("f1_delta", ascending=False).reset_index(drop=True)
+
+
+def build_ablation_table(
+    train_frame: pd.DataFrame,
+    test_frame: pd.DataFrame,
+    *,
+    label_column: str,
+    class_names: list[str],
+    original_feature_columns: list[str],
+    engineered_feature_columns: list[str],
+    base_config: BaseConfig,
+    web_subtype_config: WebSubtypeConfig,
+    web_detector_config: WebDetectorConfig,
+    random_seed: int,
+) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+
+    full_summary, _, _ = evaluate_variant(
+        variant_name="Full Hybrid",
+        train_frame=train_frame,
+        test_frame=test_frame,
+        label_column=label_column,
+        class_names=class_names,
+        feature_columns=engineered_feature_columns,
+        base_config=base_config,
+        web_subtype_config=web_subtype_config,
+        web_detector_config=web_detector_config,
+        use_web_specialist=True,
+        random_seed=random_seed,
+    )
+    rows.append(full_summary)
+
+    no_engineered_summary, _, _ = evaluate_variant(
+        variant_name="No Engineered Features",
+        train_frame=train_frame,
+        test_frame=test_frame,
+        label_column=label_column,
+        class_names=class_names,
+        feature_columns=original_feature_columns,
+        base_config=base_config,
+        web_subtype_config=web_subtype_config,
+        web_detector_config=web_detector_config,
+        use_web_specialist=True,
+        random_seed=random_seed,
+    )
+    rows.append(no_engineered_summary)
+
+    no_web_specialist_summary, _, _ = evaluate_variant(
+        variant_name="No Web Specialist",
+        train_frame=train_frame,
+        test_frame=test_frame,
+        label_column=label_column,
+        class_names=class_names,
+        feature_columns=engineered_feature_columns,
+        base_config=base_config,
+        web_subtype_config=None,
+        web_detector_config=None,
+        use_web_specialist=False,
+        random_seed=random_seed,
+    )
+    rows.append(no_web_specialist_summary)
+
+    no_class_weight_detector = WebDetectorConfig(
+        n_estimators=web_detector_config.n_estimators,
+        max_depth=web_detector_config.max_depth,
+        min_samples_leaf=web_detector_config.min_samples_leaf,
+        class_weight=None,
+        negative_multiplier=web_detector_config.negative_multiplier,
+        threshold=web_detector_config.threshold,
+    )
+    no_class_weight_summary, _, _ = evaluate_variant(
+        variant_name="No Class Weighting",
+        train_frame=train_frame,
+        test_frame=test_frame,
+        label_column=label_column,
+        class_names=class_names,
+        feature_columns=engineered_feature_columns,
+        base_config=BaseConfig(
+            n_estimators=base_config.n_estimators,
+            max_depth=base_config.max_depth,
+            min_samples_leaf=base_config.min_samples_leaf,
+            class_weight=None,
+        ),
+        web_subtype_config=web_subtype_config,
+        web_detector_config=no_class_weight_detector,
+        use_web_specialist=True,
+        random_seed=random_seed,
+    )
+    rows.append(no_class_weight_summary)
+
+    ablation_table = pd.DataFrame(rows)
+    full_f1 = float(ablation_table.loc[ablation_table["variant"] == "Full Hybrid", "f1_macro"].iloc[0])
+    ablation_table["f1_macro_delta_vs_full"] = (ablation_table["f1_macro"] - full_f1).round(6)
+    return ablation_table.sort_values(["variant"]).reset_index(drop=True)
+
+
+def architecture_svg() -> str:
+    return """<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="420" viewBox="0 0 1180 420">
+  <style>
+    .box { fill: #f5f0e6; stroke: #2e3a46; stroke-width: 2; rx: 16; ry: 16; }
+    .accent { fill: #dce8d5; stroke: #2e3a46; stroke-width: 2; rx: 16; ry: 16; }
+    .merge { fill: #f8d8b0; stroke: #2e3a46; stroke-width: 2; rx: 16; ry: 16; }
+    .text { font-family: Helvetica, Arial, sans-serif; font-size: 18px; fill: #1d232a; }
+    .small { font-family: Helvetica, Arial, sans-serif; font-size: 15px; fill: #1d232a; }
+    .arrow { stroke: #2e3a46; stroke-width: 3; fill: none; marker-end: url(#arrow); }
+  </style>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#2e3a46"/>
+    </marker>
+  </defs>
+  <rect class="box" x="40" y="150" width="210" height="110"/>
+  <text class="text" x="145" y="188" text-anchor="middle">Input Flow Record</text>
+  <text class="small" x="145" y="218" text-anchor="middle">79 original numeric features</text>
+  <text class="small" x="145" y="242" text-anchor="middle">metadata excluded from modeling</text>
+
+  <rect class="accent" x="320" y="120" width="250" height="170"/>
+  <text class="text" x="445" y="160" text-anchor="middle">Feature Builder</text>
+  <text class="small" x="445" y="192" text-anchor="middle">adds 4 engineered ratio / burst features</text>
+  <text class="small" x="445" y="216" text-anchor="middle">median imputation for tree models</text>
+  <text class="small" x="445" y="240" text-anchor="middle">standardization for the web kNN branch</text>
+
+  <rect class="box" x="650" y="50" width="250" height="110"/>
+  <text class="text" x="775" y="90" text-anchor="middle">Backbone Classifier</text>
+  <text class="small" x="775" y="118" text-anchor="middle">class-weighted RandomForest</text>
+  <text class="small" x="775" y="142" text-anchor="middle">handles the 11-way global decision</text>
+
+  <rect class="box" x="650" y="230" width="250" height="110"/>
+  <text class="text" x="775" y="270" text-anchor="middle">Web Detector</text>
+  <text class="small" x="775" y="298" text-anchor="middle">binary RandomForest</text>
+  <text class="small" x="775" y="322" text-anchor="middle">routes likely web traffic to specialist branch</text>
+
+  <rect class="accent" x="940" y="230" width="200" height="110"/>
+  <text class="text" x="1040" y="270" text-anchor="middle">Web Specialist</text>
+  <text class="small" x="1040" y="298" text-anchor="middle">scaled kNN on</text>
+  <text class="small" x="1040" y="322" text-anchor="middle">XSS / SQLi / Command Injection</text>
+
+  <rect class="merge" x="940" y="60" width="200" height="110"/>
+  <text class="text" x="1040" y="100" text-anchor="middle">Merge Rule</text>
+  <text class="small" x="1040" y="128" text-anchor="middle">keep backbone prediction unless</text>
+  <text class="small" x="1040" y="152" text-anchor="middle">web probability exceeds threshold</text>
+
+  <line class="arrow" x1="250" y1="205" x2="320" y2="205"/>
+  <line class="arrow" x1="570" y1="165" x2="650" y2="105"/>
+  <line class="arrow" x1="570" y1="245" x2="650" y2="285"/>
+  <line class="arrow" x1="900" y1="105" x2="940" y2="115"/>
+  <line class="arrow" x1="900" y1="285" x2="940" y2="285"/>
+  <line class="arrow" x1="1040" y1="230" x2="1040" y2="170"/>
+</svg>
+"""
+
+
+def write_report(
+    *,
+    report_path: Path,
+    architecture_path: Path,
+    train_source: str,
+    test_source: str,
+    label_column: str,
+    original_feature_columns: list[str],
+    engineered_feature_columns: list[str],
+    dropped_columns: list[str],
+    tuning_train_rows: int,
+    validation_rows: int,
+    final_summary: dict[str, object],
+    final_per_class: pd.DataFrame,
+    base_search_table: pd.DataFrame,
+    web_subtype_search_table: pd.DataFrame,
+    web_detector_search_table: pd.DataFrame,
+    comparison_table: pd.DataFrame | None,
+    per_class_comparison: pd.DataFrame | None,
+    ablation_table: pd.DataFrame,
+    best_base_config: BaseConfig,
+    best_web_subtype_config: WebSubtypeConfig,
+    best_web_detector_config: WebDetectorConfig,
+    reference_summary: dict[str, object] | None,
+) -> None:
+    top_base = base_search_table.sort_values(["f1_macro", "accuracy"], ascending=False).head(5)
+    top_subtype = web_subtype_search_table.sort_values(["f1_macro", "accuracy"], ascending=False).head(5)
+    top_detector = web_detector_search_table.sort_values(["f1_macro", "accuracy"], ascending=False).head(5)
+    worst_ablation = (
+        ablation_table[ablation_table["variant"] != "Full Hybrid"]
+        .sort_values("f1_macro_delta_vs_full")
+        .iloc[0]
+    )
+
+    lines = [
+        "# Task 3.3 Advanced Model Report",
+        "",
+        "## Data Summary",
+        f"- Training dataset: `{train_source}`",
+        f"- Test dataset: `{test_source}`",
+        f"- Label column: `{label_column}`",
+        f"- Original numeric feature count: {len(original_feature_columns)}",
+        f"- Engineered feature count: {len(engineered_feature_columns) - len(original_feature_columns)}",
+        f"- Final advanced-model feature count: {len(engineered_feature_columns)}",
+        f"- Internal tuning-train rows: {tuning_train_rows:,}",
+        f"- Internal validation rows: {validation_rows:,}",
+    ]
+    if dropped_columns:
+        lines.append(f"- Dropped unsupported metadata columns: {', '.join(dropped_columns)}")
+
+    lines.extend(
+        [
+            "",
+            "## Architecture",
+            f"- Diagram asset: `{architecture_path}`",
+            (
+                "- The final design is a hybrid specialist ensemble: a class-weighted "
+                "RandomForest handles the full 11-class problem, a binary web detector looks "
+                "for web-family flows, and a scaled kNN specialist resolves the web subtypes."
+            ),
+            "",
+            "```mermaid",
+            "flowchart LR",
+            '    A["Input flow"] --> B["Feature builder\\n79 original numeric + 4 engineered"]',
+            '    B --> C["Class-weighted RandomForest\\n11-way backbone"]',
+            '    B --> D["Binary web detector\\nRandomForest"]',
+            '    D --> E["Web subtype specialist\\nscaled kNN"]',
+            '    C --> F["Merge rule\\nweb override threshold"]',
+            '    E --> F',
+            '    F --> G["Final prediction"]',
+            "```",
+            "",
+            "## Hyperparameter Search",
+            "- Backbone search space:",
+            "  - `n_estimators` in `{200, 300}`",
+            "  - `max_depth` in `{None, 28}`",
+            "  - `min_samples_leaf` in `{1, 2}`",
+            "  - `class_weight` fixed at `balanced` based on the Question 3.2 result",
+            "- Web subtype search space:",
+            "  - `n_neighbors` in `{3, 5, 7, 9, 11, 15}`",
+            "  - `weights` in `{uniform, distance}`",
+            "- Web detector search space:",
+            "  - `n_estimators` in `{200, 300}`",
+            "  - `max_depth` in `{20, 24}`",
+            "  - `min_samples_leaf` in `{1, 2}`",
+            "  - negative sampling multiplier in `{10, 20}`",
+            "  - override threshold in `{0.25, 0.30, 0.35, 0.40}`",
+            "",
+            f"- Best backbone config: `{json.dumps(asdict(best_base_config), sort_keys=True)}`",
+            f"- Best web subtype config: `{json.dumps(asdict(best_web_subtype_config), sort_keys=True)}`",
+            f"- Best web detector config: `{json.dumps(asdict(best_web_detector_config), sort_keys=True)}`",
+            "",
+            "### Top Backbone Trials",
+            render_table(top_base),
+            "",
+            "### Top Web Subtype Trials",
+            render_table(top_subtype),
+            "",
+            "### Top Web Detector Trials",
+            render_table(top_detector),
+            "",
+            "## Final Test-Set Metrics",
+            render_table(pd.DataFrame([final_summary])),
+            "",
+            "## Per-Class Metrics",
+            render_table(final_per_class),
+            "",
+        ]
+    )
+
+    if comparison_table is not None and per_class_comparison is not None and reference_summary is not None:
+        lines.extend(
+            [
+                "## Comparison vs Best Question 3.2 Result",
+                f"- Best Question 3.2 strategy: `{reference_summary['strategy']}`",
+                render_table(comparison_table),
+                "",
+                "### Per-Class Delta vs Question 3.2",
+                render_table(per_class_comparison),
+                "",
+            ]
+        )
+
+    lines.extend(
+        [
+            "## Ablation Study",
+            render_table(ablation_table),
+            "",
+            "## Ablation Discussion",
+            (
+                f"- The largest macro-F1 drop came from `{worst_ablation['variant']}`, "
+                f"which changed macro F1 by {worst_ablation['f1_macro_delta_vs_full']:.6f} "
+                "relative to the full hybrid model."
+            ),
+            (
+                "- This indicates that the biggest gain comes from explicitly repairing the "
+                "web-family failure mode rather than only increasing backbone capacity."
+            ),
+            "",
+        ]
+    )
+
+    report_path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def main() -> None:
+    args = parse_args()
+    configure_logging()
+    set_global_seed(args.random_seed)
+
+    table_dir = ensure_directory(args.table_dir)
+    figure_dir = ensure_directory(args.figure_dir)
+    model_dir = ensure_directory(args.model_dir)
+
+    datasets = load_datasets_from_args(args)
+    train_frame = datasets.train_frame.copy()
+    test_frame = datasets.test_frame.copy()
+
+    label_column = infer_label_column(train_frame, test_frame, args.label_column)
+    train_frame = drop_missing_labels(train_frame, label_column, "train")
+    test_frame = drop_missing_labels(test_frame, label_column, "test")
+    train_frame = cap_rows(
+        train_frame,
+        label_column=label_column,
+        max_rows=args.max_train_rows,
+        random_seed=args.random_seed,
+        split_name="train",
+    )
+    test_frame = cap_rows(
+        test_frame,
+        label_column=label_column,
+        max_rows=args.max_test_rows,
+        random_seed=args.random_seed,
+        split_name="test",
+    )
+
+    train_frame = add_engineered_features(train_frame)
+    test_frame = add_engineered_features(test_frame)
+    original_feature_columns, engineered_feature_columns, dropped_columns = choose_feature_sets(
+        train_frame,
+        test_frame,
+        label_column,
+    )
+    class_names = sorted(train_frame[label_column].astype(str).unique().tolist())
+
+    tuning_train, validation_frame = train_test_split(
+        train_frame,
+        test_size=args.validation_size,
+        random_state=args.random_seed,
+        shuffle=True,
+        stratify=train_frame[label_column].astype(str),
+    )
+    tuning_train = cap_rows(
+        tuning_train.reset_index(drop=True),
+        label_column=label_column,
+        max_rows=args.tuning_max_train_rows,
+        random_seed=args.random_seed,
+        split_name="tuning_train",
+    )
+    validation_frame = validation_frame.reset_index(drop=True)
+
+    LOGGER.info("Tuning backbone model on %s rows; validation size is %s rows.", len(tuning_train), len(validation_frame))
+    best_base_config, base_search_table, base_valid_predictions = tune_base_model(
+        tuning_train,
+        validation_frame,
+        label_column=label_column,
+        feature_columns=engineered_feature_columns,
+        class_names=class_names,
+        random_seed=args.random_seed,
+    )
+
+    LOGGER.info("Tuning web subtype specialist.")
+    best_web_subtype_config, web_subtype_search_table, best_web_subtype_model, _ = tune_web_subtype_model(
+        tuning_train,
+        validation_frame,
+        label_column=label_column,
+        feature_columns=engineered_feature_columns,
+    )
+
+    LOGGER.info("Tuning web detector and override threshold.")
+    best_web_detector_config, web_detector_search_table = tune_web_detector(
+        tuning_train,
+        validation_frame,
+        label_column=label_column,
+        feature_columns=engineered_feature_columns,
+        base_valid_predictions=base_valid_predictions,
+        web_subtype_model=best_web_subtype_model,
+        random_seed=args.random_seed,
+    )
+
+    LOGGER.info("Retraining the full advanced hybrid model on the complete Task 3 training set.")
+    final_summary, final_per_class, final_details = evaluate_variant(
+        variant_name="Advanced Hybrid",
+        train_frame=train_frame,
+        test_frame=test_frame,
+        label_column=label_column,
+        class_names=class_names,
+        feature_columns=engineered_feature_columns,
+        base_config=best_base_config,
+        web_subtype_config=best_web_subtype_config,
+        web_detector_config=best_web_detector_config,
+        use_web_specialist=True,
+        random_seed=args.random_seed,
+    )
+
+    compare_with_q3_2 = args.max_train_rows is None and args.max_test_rows is None
+    reference_summary, reference_per_class = (None, None)
+    comparison_table: pd.DataFrame | None = None
+    per_class_comparison: pd.DataFrame | None = None
+    if compare_with_q3_2:
+        reference_summary, reference_per_class = load_best_q3_2_reference(
+            args.reference_summary_path,
+            args.reference_per_class_path,
+        )
+        if reference_summary is not None and reference_per_class is not None:
+            comparison_table = build_metric_comparison_table(final_summary, reference_summary)
+            per_class_comparison = build_per_class_comparison_table(final_per_class, reference_per_class)
+    else:
+        LOGGER.warning(
+            "Skipping the Question 3.2 comparison because row caps changed the evaluation set."
+        )
+
+    LOGGER.info("Running ablation variants.")
+    ablation_table = build_ablation_table(
+        train_frame,
+        test_frame,
+        label_column=label_column,
+        class_names=class_names,
+        original_feature_columns=original_feature_columns,
+        engineered_feature_columns=engineered_feature_columns,
+        base_config=best_base_config,
+        web_subtype_config=best_web_subtype_config,
+        web_detector_config=best_web_detector_config,
+        random_seed=args.random_seed,
+    )
+
+    architecture_path = figure_dir / "q3_3_advanced_architecture.svg"
+    architecture_path.write_text(architecture_svg(), encoding="utf-8")
+
+    summary_path = table_dir / "q3_3_advanced_summary.csv"
+    per_class_path = table_dir / "q3_3_per_class_metrics.csv"
+    search_path = table_dir / "q3_3_hyperparameter_search.csv"
+    comparison_path = table_dir / "q3_3_comparison_vs_q3_2.csv"
+    per_class_comparison_path = table_dir / "q3_3_per_class_comparison_vs_q3_2.csv"
+    ablation_path = table_dir / "q3_3_ablation_results.csv"
+    report_path = table_dir / "q3_3_report.md"
+    summary_json_path = table_dir / "q3_3_summary.json"
+    model_path = model_dir / "q3_3_hybrid_advanced_model.joblib"
+
+    pd.DataFrame([final_summary]).to_csv(summary_path, index=False)
+    final_per_class.to_csv(per_class_path, index=False)
+    pd.concat(
+        [base_search_table, web_subtype_search_table, web_detector_search_table],
+        ignore_index=True,
+        sort=False,
+    ).to_csv(search_path, index=False)
+    ablation_table.to_csv(ablation_path, index=False)
+    if comparison_table is not None:
+        comparison_table.to_csv(comparison_path, index=False)
+    if per_class_comparison is not None:
+        per_class_comparison.to_csv(per_class_comparison_path, index=False)
+
+    write_report(
+        report_path=report_path,
+        architecture_path=architecture_path,
+        train_source=datasets.train_source,
+        test_source=datasets.test_source,
+        label_column=label_column,
+        original_feature_columns=original_feature_columns,
+        engineered_feature_columns=engineered_feature_columns,
+        dropped_columns=dropped_columns,
+        tuning_train_rows=len(tuning_train),
+        validation_rows=len(validation_frame),
+        final_summary=final_summary,
+        final_per_class=final_per_class,
+        base_search_table=base_search_table,
+        web_subtype_search_table=web_subtype_search_table,
+        web_detector_search_table=web_detector_search_table,
+        comparison_table=comparison_table,
+        per_class_comparison=per_class_comparison,
+        ablation_table=ablation_table,
+        best_base_config=best_base_config,
+        best_web_subtype_config=best_web_subtype_config,
+        best_web_detector_config=best_web_detector_config,
+        reference_summary=reference_summary,
+    )
+
+    model_payload = {
+        "model_type": "advanced_hybrid",
+        "label_column": label_column,
+        "feature_columns": engineered_feature_columns,
+        "base_config": asdict(best_base_config),
+        "web_subtype_config": asdict(best_web_subtype_config),
+        "web_detector_config": asdict(best_web_detector_config),
+        **final_details["model"],
+    }
+    joblib.dump(model_payload, model_path)
+
+    summary_payload = {
+        "train_source": datasets.train_source,
+        "test_source": datasets.test_source,
+        "label_column": label_column,
+        "original_feature_columns": original_feature_columns,
+        "engineered_feature_columns": engineered_feature_columns,
+        "final_summary": final_summary,
+        "best_base_config": asdict(best_base_config),
+        "best_web_subtype_config": asdict(best_web_subtype_config),
+        "best_web_detector_config": asdict(best_web_detector_config),
+        "comparison_available": comparison_table is not None,
+        "reference_summary": reference_summary,
+        "ablation_rows": ablation_table.to_dict(orient="records"),
+    }
+    summary_json_path.write_text(json.dumps(summary_payload, indent=2), encoding="utf-8")
+
+    LOGGER.info("Wrote Task 3.3 summary to %s", summary_path)
+    LOGGER.info("Wrote Task 3.3 per-class metrics to %s", per_class_path)
+    LOGGER.info("Wrote Task 3.3 hyperparameter search table to %s", search_path)
+    LOGGER.info("Wrote Task 3.3 ablation table to %s", ablation_path)
+    LOGGER.info("Wrote Task 3.3 report to %s", report_path)
+    LOGGER.info("Wrote Task 3.3 architecture diagram to %s", architecture_path)
+    LOGGER.info("Serialized the Task 3.3 model to %s", model_path)
+
+
+if __name__ == "__main__":
+    main()

@@ -56,7 +56,7 @@ TEST_KEYWORDS = ("test", "testing", "holdout")
 METADATA_EXCLUSIONS = {"src_ip", "dst_ip", "timestamp", "_source_file", "_source_router_id"}
 ALLOWED_CATEGORICAL_FEATURES = {"router_id"}
 DEFAULT_LABELED_DATA_DIR = PROJECT_ROOT / "data" / "raw_labeled"
-DEFAULT_SPLIT_STRATEGY = "source_file"
+DEFAULT_SPLIT_STRATEGY = "hybrid"
 SOURCE_FILE_COLUMN = "_source_file"
 SOURCE_ROUTER_COLUMN = "_source_router_id"
 
@@ -122,11 +122,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--split-strategy",
-        choices=("row", "source_file", "router"),
+        choices=("row", "source_file", "router", "hybrid"),
         default=DEFAULT_SPLIT_STRATEGY,
         help=(
             "How to split an auto-discovered labeled corpus. "
-            "'source_file' keeps whole labeled source files together for a stricter evaluation."
+            "'hybrid' keeps whole labeled source files together when possible and only splits rows "
+            "within singleton-class files so all classes remain represented."
         ),
     )
     parser.add_argument(
@@ -314,6 +315,47 @@ def choose_balanced_label_subsets(
     return sorted(set(selected_groups))
 
 
+def split_singleton_label_files(
+    combined: pd.DataFrame,
+    manifest: pd.DataFrame,
+    *,
+    test_size: float,
+    random_seed: int,
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
+    singleton_files = (
+        manifest.groupby("label")
+        .filter(lambda group: len(group) == 1)[SOURCE_FILE_COLUMN]
+        .astype(str)
+        .tolist()
+    )
+
+    if not singleton_files:
+        empty = combined.iloc[0:0].copy()
+        return empty, empty, []
+
+    train_parts: list[pd.DataFrame] = []
+    test_parts: list[pd.DataFrame] = []
+
+    for offset, source_file in enumerate(sorted(singleton_files), start=1):
+        file_frame = combined[combined[SOURCE_FILE_COLUMN] == source_file].copy()
+        if len(file_frame) < 2:
+            raise ValueError(
+                f"Hybrid split requires at least 2 rows in singleton source file {source_file}, "
+                f"but only found {len(file_frame)}."
+            )
+
+        test_rows = max(1, round(len(file_frame) * test_size))
+        test_rows = min(test_rows, len(file_frame) - 1)
+        sampled_test = file_frame.sample(n=test_rows, random_state=random_seed + offset)
+        sampled_train = file_frame.drop(index=sampled_test.index)
+        train_parts.append(sampled_train)
+        test_parts.append(sampled_test)
+
+    train_frame = pd.concat(train_parts, ignore_index=True, sort=False)
+    test_frame = pd.concat(test_parts, ignore_index=True, sort=False)
+    return train_frame, test_frame, sorted(singleton_files)
+
+
 def choose_router_test_groups(
     manifest: pd.DataFrame,
     *,
@@ -412,28 +454,65 @@ def auto_split_labeled_directory(
                 test_size=test_size,
                 random_seed=random_seed,
             )
+            singleton_split_files: list[str] = []
+            mask = combined[SOURCE_FILE_COLUMN].isin(test_groups)
+            train_frame = combined.loc[~mask].reset_index(drop=True)
+            test_frame = combined.loc[mask].reset_index(drop=True)
+        elif split_strategy == "hybrid":
+            multifile_manifest = manifest.groupby("label").filter(lambda group: len(group) > 1).reset_index(drop=True)
+            test_groups = choose_balanced_label_subsets(
+                multifile_manifest,
+                test_size=test_size,
+                random_seed=random_seed,
+            )
+            singleton_train, singleton_test, singleton_split_files = split_singleton_label_files(
+                combined,
+                manifest,
+                test_size=test_size,
+                random_seed=random_seed,
+            )
+            singleton_mask = combined[SOURCE_FILE_COLUMN].isin(singleton_split_files)
+            multifile_pool = combined.loc[~singleton_mask].copy()
+            train_frame = pd.concat(
+                [
+                    multifile_pool.loc[~multifile_pool[SOURCE_FILE_COLUMN].isin(test_groups)],
+                    singleton_train,
+                ],
+                ignore_index=True,
+                sort=False,
+            )
+            test_frame = pd.concat(
+                [
+                    multifile_pool.loc[multifile_pool[SOURCE_FILE_COLUMN].isin(test_groups)],
+                    singleton_test,
+                ],
+                ignore_index=True,
+                sort=False,
+            )
+            test_groups = sorted(set(test_groups + [f"{file_name} [row-split]" for file_name in singleton_split_files]))
         elif split_strategy == "router":
             test_groups = choose_router_test_groups(
                 manifest,
                 test_size=test_size,
             )
+            singleton_split_files = []
+            if not test_groups:
+                raise ValueError(
+                    f"Could not construct a non-empty {split_strategy} test split from {labeled_data_dir}."
+                )
+            selected_router_ids = {int(value) for value in test_groups}
+            mask = combined[SOURCE_ROUTER_COLUMN].isin(selected_router_ids)
+            train_frame = combined.loc[~mask].reset_index(drop=True)
+            test_frame = combined.loc[mask].reset_index(drop=True)
         else:
             raise ValueError(f"Unsupported split strategy: {split_strategy}")
 
-        if not test_groups:
+        if split_strategy in {"source_file", "hybrid"} and test_frame.empty:
             raise ValueError(
                 f"Could not construct a non-empty {split_strategy} test split from {labeled_data_dir}."
             )
 
-        if split_strategy == "router":
-            selected_router_ids = {int(value) for value in test_groups}
-            mask = combined[SOURCE_ROUTER_COLUMN].isin(selected_router_ids)
-        else:
-            mask = combined[SOURCE_FILE_COLUMN].isin(test_groups)
-
-        train_frame = combined.loc[~mask].reset_index(drop=True)
-        test_frame = combined.loc[mask].reset_index(drop=True)
-        train_groups = sorted(set(combined.loc[~mask, SOURCE_FILE_COLUMN].astype(str).tolist()))
+        train_groups = sorted(set(train_frame[SOURCE_FILE_COLUMN].astype(str).tolist()))
 
         train_labels = set(train_frame[inferred_label_column].astype(str))
         test_labels = set(test_frame[inferred_label_column].astype(str))

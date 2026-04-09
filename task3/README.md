@@ -22,7 +22,7 @@ If your labeled files in `data/processed/` already contain `train` and `test` in
 /opt/homebrew/bin/python3.11 task3/q3_1a_baselines.py
 ```
 
-If no pre-split files exist yet, the script also falls back to recursively loading the labeled CSVs under `data/raw_labeled/` and creating a reproducible train/test split automatically. The default is now a stricter `source_file` holdout, which keeps whole labeled files together instead of splitting rows from the same source across train and test.
+If no pre-split files exist yet, the script also falls back to recursively loading the labeled CSVs under `data/raw_labeled/` and creating a reproducible stratified train/test split automatically.
 
 The script expects a label column such as `label`, `class`, `target`, `attack_label`, or `attack_type`. It trains:
 
@@ -61,7 +61,7 @@ Run the feature-importance workflow with:
 
 By default, the script tries to reuse the strongest tree-based baseline from Question 3.1(a). If the serialized baseline model is missing, it retrains the selected tree model with the same baseline configuration and then extracts feature importances.
 
-Like Question 3.1(a), this script can also auto-build a train/test split from `data/raw_labeled/` when explicit or pre-split labeled datasets are not available, and it uses the same `source_file` holdout by default.
+Like Question 3.1(a), this script can also auto-build a train/test split from `data/raw_labeled/` when explicit or pre-split labeled datasets are not available.
 
 Artifacts written by default:
 
@@ -97,3 +97,175 @@ Artifacts written by default:
 - `outputs/task3/tables/q3_1c_report.md`
 
 The generated report highlights the most commonly confused class pairs and provides short networking-oriented hypotheses for why those confusions occur.
+
+## Question 3.2(a)
+
+Run the imbalance-handling comparison with:
+
+```bash
+/opt/homebrew/bin/python3.11 task3/q3_2a_imbalance_strategies.py
+```
+
+The script retrains the best baseline family for this project, `RandomForest`, under four conditions:
+
+- no balancing
+- selective `SMOTE` oversampling
+- `class_weight="balanced"`
+- hybrid `SMOTE + random undersampling`
+
+Because the assignment warns that naive SMOTE over the full 6.8M-flow corpus is computationally prohibitive, the SMOTE-based strategies only oversample classes whose training counts fall below `--minority-target-count` (default `25000`). The hybrid strategy then caps the largest classes with random undersampling via `--hybrid-majority-cap` (default `250000`).
+
+Useful optional flags:
+
+- `--minority-target-count 25000` to control which classes are treated as minority classes for SMOTE-based strategies
+- `--hybrid-majority-cap 250000` to control how aggressively the hybrid strategy undersamples the largest classes
+- `--max-train-rows 50000 --max-test-rows 10000` for faster smoke tests while developing
+
+Artifacts written by default:
+
+- `outputs/task3/tables/q3_2a_imbalance_summary.csv`
+- `outputs/task3/tables/q3_2a_per_class_metrics.csv`
+- `outputs/task3/tables/q3_2a_sampling_plan.csv`
+- `outputs/task3/tables/q3_2a_strategy_sampling.csv`
+- `outputs/task3/tables/q3_2a_summary.json`
+- `outputs/task3/tables/q3_2a_report.md`
+- `outputs/models/task3/q3_2a_randomforest_baseline.joblib`
+- `outputs/models/task3/q3_2a_randomforest_smote.joblib`
+- `outputs/models/task3/q3_2a_randomforest_class_weight.joblib`
+- `outputs/models/task3/q3_2a_randomforest_hybrid.joblib`
+
+## Question 3.2(b)
+
+Run the rare-class analysis workflow with:
+
+```bash
+/opt/homebrew/bin/python3.11 task3/q3_2b_rare_class_analysis.py
+```
+
+This script reads the 3.2(a) outputs, creates the grouped bar chart requested by the assignment for the three rare classes:
+
+- `Web-command-injection`
+- `Web-sql-injection`
+- `Infiltration-mitm`
+
+It also summarizes whether the rare-class improvements come with any measurable cost on the non-rare classes.
+
+Artifacts written by default:
+
+- `outputs/task3/figures/q3_2b_rare_class_f1.png`
+- `outputs/task3/tables/q3_2b_rare_class_f1.csv`
+- `outputs/task3/tables/q3_2b_rare_class_summary.csv`
+- `outputs/task3/tables/q3_2b_majority_tradeoff.csv`
+- `outputs/task3/tables/q3_2b_majority_deltas.csv`
+- `outputs/task3/tables/q3_2b_summary.json`
+- `outputs/task3/tables/q3_2b_report.md`
+
+## Question 3.3
+
+Run the advanced-model workflow with:
+
+```bash
+/opt/homebrew/bin/python3.11 task3/q3_3_advanced_model.py
+```
+
+The script builds a tuned hybrid model designed to fix the main failure mode we observed in Questions 3.1 and 3.2:
+
+- a class-weighted `RandomForest` backbone for the full 11-class decision
+- a binary web-family detector that flags likely web traffic
+- a scaled `kNN` specialist that separates `Web-xss`, `Web-sql-injection`, and `Web-command-injection`
+- four engineered ratio / burst features carried over from Task 2
+
+The workflow automatically:
+
+- creates an internal train/validation split for hyperparameter selection
+- searches the backbone, web-detector, and web-specialist hyperparameters
+- retrains the best hybrid model on the full Task 3 training set
+- reports all Question 3.1(a) metrics on the test set
+- compares the result with the best Question 3.2 strategy when those outputs are available
+- runs a 3-component ablation study
+- writes a report plus an architecture diagram
+
+Useful optional flags:
+
+- `--tuning-max-train-rows 600000` to control how many rows are used for hyperparameter selection
+- `--max-train-rows 120000 --max-test-rows 25000` for a quicker smoke test while developing
+- `--validation-size 0.15` to change the held-out fraction used for tuning
+
+Artifacts written by default:
+
+- `outputs/task3/figures/q3_3_advanced_architecture.svg`
+- `outputs/task3/tables/q3_3_advanced_summary.csv`
+- `outputs/task3/tables/q3_3_per_class_metrics.csv`
+- `outputs/task3/tables/q3_3_hyperparameter_search.csv`
+- `outputs/task3/tables/q3_3_ablation_results.csv`
+- `outputs/task3/tables/q3_3_comparison_vs_q3_2.csv` when the Question 3.2 outputs are present and the evaluation set is unchanged
+- `outputs/task3/tables/q3_3_per_class_comparison_vs_q3_2.csv` under the same comparison conditions
+- `outputs/task3/tables/q3_3_summary.json`
+- `outputs/task3/tables/q3_3_report.md`
+- `outputs/models/task3/q3_3_hybrid_advanced_model.joblib`
+
+## Question 3.4(a)
+
+Run the router-level evaluation with:
+
+```bash
+/opt/homebrew/bin/python3.11 task3/q3_4a_router_level_analysis.py
+```
+
+By default, the script:
+
+- reconstructs the same deterministic Task 3 test split from the saved Question 3.1(a) split manifest when available
+- auto-selects the best available model artifact across Questions 3.1(a), 3.2(a), and 3.3 using macro F1
+- evaluates that model router-by-router on the held-out test set
+- reports per-router summary metrics and per-router/per-class F1-scores
+- relates the hardest/easiest routers to their test-set class distributions
+
+Artifacts written by default:
+
+- `outputs/task3/figures/q3_4a_router_class_f1_heatmap.png`
+- `outputs/task3/figures/q3_4a_router_class_distribution.png`
+- `outputs/task3/tables/q3_4a_router_summary.csv`
+- `outputs/task3/tables/q3_4a_router_class_metrics.csv`
+- `outputs/task3/tables/q3_4a_router_class_f1_matrix.csv`
+- `outputs/task3/tables/q3_4a_router_class_distribution.csv`
+- `outputs/task3/tables/q3_4a_router_mix_summary.csv`
+- `outputs/task3/tables/q3_4a_hardest_router_class_pairs.csv`
+- `outputs/task3/tables/q3_4a_summary.json`
+- `outputs/task3/tables/q3_4a_report.md`
+
+## Question 3.4(b)
+
+Run the cross-router generalization experiment with:
+
+```bash
+/opt/homebrew/bin/python3.11 task3/q3_4b_cross_router_generalization.py
+```
+
+By default, the script:
+
+- auto-selects the best available model artifact across Questions 3.1(a), 3.2(a), and 3.3
+- retrains that model family on routers `D1` through `D7`
+- evaluates on the unseen routers `D8` through `D10`
+- compares the result against the standard Task 3 holdout metrics for the same model family
+- highlights classes that appear only in the unseen routers and reports their impact on generalization
+
+Useful optional flags:
+
+- `--train-routers D1,D2,D3,D4,D5,D6,D7`
+- `--test-routers D8,D9,D10`
+- `--max-train-rows 200000 --max-test-rows 50000` for quicker smoke tests
+
+Artifacts written by default:
+
+- `outputs/task3/figures/q3_4b_overall_metric_comparison.png`
+- `outputs/task3/tables/q3_4b_cross_router_summary.csv`
+- `outputs/task3/tables/q3_4b_cross_router_per_class_metrics.csv`
+- `outputs/task3/tables/q3_4b_comparison_vs_standard.csv`
+- `outputs/task3/tables/q3_4b_per_class_comparison_vs_standard.csv`
+- `outputs/task3/tables/q3_4b_class_coverage.csv`
+- `outputs/task3/tables/q3_4b_router_summary.csv`
+- `outputs/task3/tables/q3_4b_router_class_metrics.csv`
+- `outputs/task3/tables/q3_4b_router_mix_summary.csv`
+- `outputs/task3/tables/q3_4b_summary.json`
+- `outputs/task3/tables/q3_4b_report.md`
+- `outputs/models/task3/q3_4b_cross_router_model.joblib`
