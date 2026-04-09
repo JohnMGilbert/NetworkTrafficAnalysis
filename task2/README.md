@@ -127,3 +127,31 @@ Artifacts written by default:
 - `outputs/task2/tables/q2_3a_discoverability_ranking.csv`
 - `outputs/task2/tables/q2_3a_summary.json`
 - `outputs/task2/tables/q2_3a_report.md`
+
+## Question 2.3(b)
+
+Run the imbalance-analysis workflow with:
+
+```bash
+/opt/homebrew/bin/python3.11 task2/q2_3b_imbalance_analysis.py
+```
+
+Artifacts written by default:
+
+- `outputs/task2/tables/q2_3b_cluster_imbalance_summary.csv`
+- `outputs/task2/tables/q2_3b_summary.json`
+- `outputs/task2/tables/q2_3b_report.md`
+
+## Task 2 Submission Package
+
+Prepare the short prediction submission report with:
+
+```bash
+/opt/homebrew/bin/python3.11 task2/q2_submission_predictions.py
+```
+
+Artifacts written by default:
+
+- `outputs/task2/tables/q2_task2_predictions.csv`
+- `outputs/task2/tables/q2_task2_prediction_summary.json`
+- `outputs/task2/tables/q2_task2_prediction_report.md`
