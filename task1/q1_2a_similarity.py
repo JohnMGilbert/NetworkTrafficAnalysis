@@ -147,6 +147,7 @@ def build_methodology(feature_count: int) -> str:
             "- Cosine similarity compares profile shape rather than raw magnitude, which is useful because router traffic volume varies substantially.",
             "- Z-scoring each feature across routers prevents large-scale features from dominating the similarity matrix.",
             "- Per-router means are scalable to compute exactly over the full dataset with chunked aggregation.",
+            "- The heatmap uses a diverging scale from -1 to 1 because cosine similarity can be negative after z-scoring.",
             "",
             "Aggregation method:",
             f"- Used {feature_count} numeric CICFlowMeter features after excluding `src_ip`, `dst_ip`, and `timestamp`.",
@@ -157,23 +158,26 @@ def build_methodology(feature_count: int) -> str:
 
 
 def make_heatmap(similarity: pd.DataFrame, figure_dir: Path) -> Path:
-    sns.set_theme(style="white", context="talk")
-    fig, ax = plt.subplots(figsize=(10, 8))
+    sns.set_theme(style="white", context="paper")
+    fig, ax = plt.subplots(figsize=(11, 9))
     sns.heatmap(
         similarity,
         annot=True,
-        fmt=".3f",
-        cmap="YlOrRd",
-        vmin=0.0,
+        fmt=".2f",
+        cmap="vlag",
+        vmin=-1.0,
         vmax=1.0,
+        center=0.0,
         square=True,
         linewidths=0.5,
         cbar_kws={"label": "Cosine Similarity"},
+        annot_kws={"size": 8},
         ax=ax,
     )
     ax.set_title("Task 1.2(a): Router-to-Router Similarity Heatmap")
     ax.set_xlabel("Router")
     ax.set_ylabel("Router")
+    ax.tick_params(axis="both", labelsize=9)
     fig.tight_layout()
 
     output_path = figure_dir / "q1_2a_router_similarity_heatmap.png"

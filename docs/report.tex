@@ -98,12 +98,12 @@ Feature & F-ratio & Interpretation \\
 \end{figure}
 
 \subsection{Question 1.2: Router Similarity and Adjacency Estimation}
-For Q1.2(a), each router was represented by the mean of 79 numeric CICFlowMeter features after excluding \texttt{src\_ip}, \texttt{dst\_ip}, and \texttt{timestamp}. The per-router feature profiles were z-scored across routers, and cosine similarity was computed on the standardized profile vectors. Cosine similarity was chosen because it compares traffic-profile shape rather than raw volume, which matters because flow counts vary substantially across D1--D10. The resulting heatmap is shown in Figure~\ref{fig:q1_similarity}.
+For Q1.2(a), each router was represented by the mean of 79 numeric CICFlowMeter features after excluding \texttt{src\_ip}, \texttt{dst\_ip}, and \texttt{timestamp}. The per-router feature profiles were z-scored across routers, and cosine similarity was computed on the standardized profile vectors. Cosine similarity was chosen because it compares traffic-profile shape rather than raw volume, which matters because flow counts vary substantially across D1--D10. Because cosine similarity can be negative after z-scoring, Figure~\ref{fig:q1_similarity} uses a diverging scale centered at zero.
 
 \begin{figure}[!t]
 \centering
 \includegraphics[width=0.72\linewidth]{q1_2a_router_similarity_heatmap.png}
-\caption{Q1.2(a) cosine-similarity matrix over standardized per-router mean feature profiles.}
+\caption{Q1.2(a) cosine-similarity matrix over standardized per-router mean feature profiles. The diverging color scale is centered at zero so negative similarities are visually distinct from weak positive similarities.}
 \label{fig:q1_similarity}
 \end{figure}
 
@@ -131,7 +131,7 @@ Maximum spanning tree & 10 & 9 & 1.8 & 0.200 \\
 \label{fig:q1_adjacency}
 \end{figure}
 
-For Q1.2(c), I computed overlap of source/destination IP sets and Jaccard similarity of \texttt{(src\_port, dst\_port, protocol)} tuples. The strongest overlap pairs were D10--D3, D6--D7, D8--D9, D6--D8, and D10--D7, as shown in Table~\ref{tab:q1_overlap}. Figures~\ref{fig:q1_ip_heatmap}--\ref{fig:q1_refined_mst} show the two overlap matrices and the refined graph separately so that the annotated values remain legible. The IP/tuple refinement retained seven feature-based MST edges, added D6--D7 and D8--D9, and removed D2--D8 and D5--D9. This means the feature-based and IP-based evidence reinforce many backbone edges, but IP overlap corrects pairs that appear globally similar without strong direct communication evidence.
+For Q1.2(c), I computed overlap of source/destination IP sets and Jaccard similarity of source-port, destination-port, and protocol tuples. The strongest overlap pairs were D10--D3, D6--D7, D8--D9, D6--D8, and D10--D7, as shown in Table~\ref{tab:q1_overlap}. Figures~\ref{fig:q1_ip_heatmap}--\ref{fig:q1_refined_mst} show the two overlap matrices and the refined graph separately so that the annotated values remain legible. The IP/tuple refinement retained seven feature-based MST edges, added D6--D7 and D8--D9, and removed D2--D8 and D5--D9. This means the feature-based and IP-based evidence reinforce many backbone edges, but IP overlap corrects pairs that appear globally similar without strong direct communication evidence.
 
 \begin{table}[!t]
 \caption{Q1.2(c) strongest IP and port/protocol tuple overlap pairs.}
@@ -231,6 +231,8 @@ Removal impact & Removing D9 leaves the graph disconnected, with two components 
 
 For Q1.3(c), I compared the reconstructed collector graph against public GEANT-2012 resources from Topology Zoo and TopoHub. The inferred graph correctly captured that GEANT behaves like one connected backbone with non-uniform transit importance. It diverged from reality in scale and exact geography: the inferred graph has only the ten monitored routers and 11 projected edges, while the public GEANT-2012 topology has 40 nodes and 61 links. The collector-only projection is also denser because unobserved intermediate routers are collapsed. Traceroute paths, RTT/geographic metadata, interface counters, or control-plane state would improve direct-adjacency inference.
 
+The reconstruction is therefore not expected to be an exact physical topology. I attempted to infer links using only flow-observation evidence from D1--D10: feature-profile similarity, shared IP/port evidence, traffic-volume compatibility, packet-balance similarity, and sparse graph construction. That evidence can identify routers that see related traffic or occupy similar backbone roles, but it cannot reveal unlabeled routers that sit between the collectors. In the true topology, many D-router relationships pass through intermediate blue routers rather than through direct D-to-D links. For example, a strong inferred edge can mean that two collectors observe adjacent traffic domains, share a multi-hop path, or sit on the same service/attack corridor. The result should be read as a ten-node collector-level projection of the network, not as the complete GEANT physical graph.
+
 \begin{table}[!t]
 \caption{Q1.3(c) comparison with the public GEANT-2012 topology.}
 \label{tab:q1_geant}
@@ -292,7 +294,9 @@ For Q2.1(b), streaming IncrementalPCA was fit on all 5,377,256 preprocessed rows
 
 For Q2.1(c), I engineered four attack-oriented features: directional byte imbalance, bytes per packet, burst/idle log ratio, and packet-size asymmetry. Table~\ref{tab:q2_engineered} gives the networking intuition and computation for each. Their distributions across the final HDBSCAN clusters are shown in Figure~\ref{fig:q2_engineered}. The colors in that figure simply distinguish the HDBSCAN cluster groups shown on the x-axis; they do not encode an additional variable. Cluster -1 is HDBSCAN noise, while clusters 0--4 use the semantic labels assigned in Q2.2(c).
 
-\begin{table}[!t]
+\clearpage
+
+\begin{table}[H]
 \caption{Q2.1(c) engineered features and network intuition.}
 \label{tab:q2_engineered}
 \centering
@@ -309,7 +313,7 @@ Feature & Computation & Intuition \\
 \end{tabularx}
 \end{table}
 
-\begin{figure}[!t]
+\begin{figure}[H]
 \centering
 \includegraphics[width=0.92\linewidth]{q2_2c_hdbscan_engineered_feature_distributions.png}
 \caption{Q2.1(c) engineered-feature distributions across the final discovered HDBSCAN clusters. Each boxplot shows the median, interquartile range, whiskers, and outliers for one engineered feature within one cluster; the x-axis labels give both cluster IDs and the semantic mappings used later in Q2.2(c).}
@@ -317,9 +321,9 @@ Feature & Computation & Intuition \\
 \end{figure}
 
 \subsection{Question 2.2: Unsupervised Attack Discovery}
-The clustering experiments reused the stratified 100,000-row UMAP sample and fit final clustering models on a stratified 5,000-row subset, with hyperparameter selection on a 2,000-row subset. This sampling choice follows the assignment's allowance for stratified random samples on computationally expensive clustering. The three required clustering families were MiniBatchKMeans, HDBSCAN, and GaussianMixture. Table~\ref{tab:q2_cluster_config} lists the selected configurations and cluster counts, and Figure~\ref{fig:q2_clusters} shows the embeddings.
+The clustering experiments reused the stratified 100,000-row UMAP sample and fit final clustering models on a stratified 20,000-row subset, with hyperparameter selection on an 8,000-row subset. This sampling choice follows the assignment's allowance for stratified random samples on computationally expensive clustering while giving the density-based model more support for stable density estimates. The three required clustering families were MiniBatchKMeans, HDBSCAN, and GaussianMixture. MiniBatchKMeans was selected by silhouette score over \texttt{k=8..14}; HDBSCAN was selected by silhouette score multiplied by non-noise coverage; and GaussianMixture was selected by lowest BIC over 8--14 components. Table~\ref{tab:q2_cluster_config} lists the selected configurations and cluster counts, and Figures~\ref{fig:q2_clusters_kmeans}, \ref{fig:q2_clusters_hdbscan}, and \ref{fig:q2_clusters_gmm} show the embeddings.
 
-\begin{table}[!t]
+\begin{table}[H]
 \caption{Q2.2(a) selected clustering algorithms and hyperparameters.}
 \label{tab:q2_cluster_config}
 \centering
@@ -329,22 +333,36 @@ The clustering experiments reused the stratified 100,000-row UMAP sample and fit
 Algorithm & Family & Clusters & Selected configuration \\
 \midrule
 MiniBatchKMeans & Partitional & 8 & \texttt{n\_clusters=8}, \texttt{batch\_size=4096}, \texttt{max\_iter=200}, \texttt{n\_init=10} \\
-HDBSCAN & Density-based & 5 plus noise & \texttt{min\_cluster\_size=250}, \texttt{min\_samples=10}, \texttt{cluster\_selection\_method=eom}; 12.72\% noise \\
-GaussianMixture & Model-based & 14 & \texttt{n\_components=14}, diagonal covariance, \texttt{reg\_covar=0.0001}, \texttt{max\_iter=200}, \texttt{init\_params=kmeans} \\
+HDBSCAN & Density-based & 5 plus noise & \texttt{min\_cluster\_size=1000}, \texttt{min\_samples=25}, \texttt{cluster\_selection\_method=eom}; 12.29\% noise \\
+GaussianMixture & Model-based & 11 & \texttt{n\_components=11}, diagonal covariance, \texttt{reg\_covar=0.0001}, \texttt{max\_iter=200}, \texttt{init\_params=kmeans} \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-\begin{figure}[!t]
+\begin{figure}[H]
 \centering
-\includegraphics[width=0.96\linewidth]{q2_2a_cluster_embedding_comparison.png}
-\caption{Q2.2(a) MiniBatchKMeans, HDBSCAN, and GaussianMixture cluster assignments projected onto the Q2.1(b) UMAP space.}
-\label{fig:q2_clusters}
+\includegraphics[width=0.82\linewidth]{q2_2a_minibatchkmeans_clusters.png}
+\caption{Q2.2(a) MiniBatchKMeans cluster assignments projected onto the Q2.1(b) UMAP space.}
+\label{fig:q2_clusters_kmeans}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.82\linewidth]{q2_2a_hdbscan_clusters.png}
+\caption{Q2.2(a) HDBSCAN cluster assignments projected onto the Q2.1(b) UMAP space. Gray points are HDBSCAN noise.}
+\label{fig:q2_clusters_hdbscan}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.82\linewidth]{q2_2a_gaussianmixture_clusters.png}
+\caption{Q2.2(a) GaussianMixture cluster assignments projected onto the Q2.1(b) UMAP space.}
+\label{fig:q2_clusters_gmm}
 \end{figure}
 
 Internal validation used silhouette score, Davies-Bouldin Index, and Calinski-Harabasz Index. For HDBSCAN, noise points were excluded from metric computation because those metrics assume regular cluster labels. Table~\ref{tab:q2_validation} shows that HDBSCAN achieved the best overall rank, although GaussianMixture came closest to the nominal 11-class count.
 
-\begin{table}[!t]
+\begin{table}[H]
 \caption{Q2.2(b) internal validation metrics for clustering. Higher silhouette and Calinski-Harabasz are better; lower Davies-Bouldin is better.}
 \label{tab:q2_validation}
 \centering
@@ -353,16 +371,16 @@ Internal validation used silhouette score, Davies-Bouldin Index, and Calinski-Ha
 \toprule
 Algorithm & Clusters & Noise & Noise \% & Silhouette & DBI & CHI \\
 \midrule
-HDBSCAN & 5 & 636 & 12.72 & 0.4719 & 0.9041 & 3387.73 \\
-GaussianMixture & 14 & 0 & 0.00 & 0.4311 & 1.3676 & 1364.52 \\
-MiniBatchKMeans & 8 & 0 & 0.00 & 0.3715 & 1.3678 & 834.01 \\
+HDBSCAN & 5 & 2458 & 12.29 & 0.4599 & 0.9268 & 12571.89 \\
+GaussianMixture & 11 & 0 & 0.00 & 0.4351 & 0.9922 & 5592.09 \\
+MiniBatchKMeans & 8 & 0 & 0.00 & 0.4011 & 1.1477 & 4230.38 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-For Q2.2(c), HDBSCAN was selected for semantic mapping because it had the strongest internal validation profile and handles noise and imbalanced density better than methods that force every sample into a cluster. Table~\ref{tab:q2_mapping} gives the confusion-style mapping to the known classes. Cluster 0 maps to DDoS TCP because flows are tiny and one-directional; Cluster 1 maps to DDoS Bot because it contains large asymmetric flows concentrated on service ports; Cluster 2 maps to Normal because it contains short balanced exchanges with more port diversity; Cluster 3 maps to DoS Hulk because it has sustained request-burst behavior; Cluster 4 maps to DoS SlowHTTP because it contains long-lived low-rate flows. Noise remains Unknown rather than being over-labeled.
+For Q2.2(c), HDBSCAN was selected for semantic mapping because it had the strongest internal validation profile and handles noise and imbalanced density better than methods that force every sample into a cluster. Table~\ref{tab:q2_mapping} gives the confusion-style mapping to the known classes, and Table~\ref{tab:q2_cluster_stats} gives the supporting cluster statistics. Cluster 0 maps to DDoS TCP because flows are tiny and one-directional; Cluster 1 maps to DDoS Bot because it contains large asymmetric flows concentrated on service ports; Cluster 2 maps to Normal because it contains short balanced exchanges with more port diversity; Cluster 3 maps to DoS SlowHTTP because it contains long-lived, low-rate flows; Cluster 4 maps to DoS Hulk because it has sustained request-burst behavior. Noise remains Unknown rather than being over-labeled. The protocol field was zero variance after preprocessing, so the dominant ports are the main service-level cue in the cluster statistics.
 
-\begin{table}[!t]
+\begin{table}[H]
 \caption{Q2.2(c) HDBSCAN cluster-to-class mapping.}
 \label{tab:q2_mapping}
 \centering
@@ -371,20 +389,39 @@ For Q2.2(c), HDBSCAN was selected for semantic mapping because it had the strong
 \toprule
 Cluster & Predicted label & Rows & Share & Confidence \\
 \midrule
--1 & Unknown & 636 & 12.72\% & Low \\
-0 & DDoS TCP & 429 & 8.58\% & High \\
-1 & DDoS Bot & 1406 & 28.12\% & Medium \\
-2 & Normal & 1101 & 22.02\% & Medium \\
-3 & DoS Hulk & 1040 & 20.80\% & Medium \\
-4 & DoS SlowHTTP & 388 & 7.76\% & High \\
+-1 & Unknown & 2458 & 12.29\% & Low \\
+0 & DDoS TCP & 1694 & 8.47\% & High \\
+1 & DDoS Bot & 5813 & 29.07\% & Medium \\
+2 & Normal & 4308 & 21.54\% & Medium \\
+3 & DoS SlowHTTP & 1570 & 7.85\% & High \\
+4 & DoS Hulk & 4157 & 20.79\% & Medium \\
 \bottomrule
 \end{tabular}
+\end{table}
+
+\begin{table}[H]
+\caption{Q2.2(c) supporting HDBSCAN cluster statistics. Duration values are reported in the raw dataset units.}
+\label{tab:q2_cluster_stats}
+\centering
+\scriptsize
+\begin{tabularx}{\linewidth}{@{}clrrrY@{}}
+\toprule
+Cluster & Label & Mean duration & Mean packets & Mean bytes & Dominant destination ports \\
+\midrule
+-1 & Unknown & 16.67M & 57.85 & 33794 & 5055, 6050, 5050, 6051, 5000 \\
+0 & DDoS TCP & 146966 & 1.95 & 111 & 5003, 5002, 7005, 6004, 5055 \\
+1 & DDoS Bot & 3.39M & 111.86 & 83561 & 7777, 8080, 5055, 5050 \\
+2 & Normal & 323 & 3.66 & 205 & 6003, 7002, 7005, 7054, 5051 \\
+3 & DoS SlowHTTP & 31.38M & 101.80 & 17762 & 6060, 7123 \\
+4 & DoS Hulk & 13.76M & 105.08 & 18321 & 5000, 2048, 6000 \\
+\bottomrule
+\end{tabularx}
 \end{table}
 
 \subsection{Question 2.3: Discovery Analysis}
 Discoverability was ranked using the selected HDBSCAN model, cluster mapping confidence, class distinctiveness, and assignment-provided imbalance facts. The easiest classes were those with extreme flow signatures, such as DDoS TCP and DoS SlowHTTP. The hardest were rare application-layer or stealthy behaviors such as Web Command Injection, Web SQL Injection, and Infiltration MITM, which are unlikely to form dense clusters from flow statistics alone.
 
-\begin{table}[!t]
+\begin{table}[H]
 \caption{Q2.3(a) inferred class discoverability ranking.}
 \label{tab:q2_discoverability}
 \centering
@@ -393,11 +430,11 @@ Discoverability was ranked using the selected HDBSCAN model, cluster mapping con
 \toprule
 Class & Rank & Score & Reason \\
 \midrule
-DDoS TCP & 1 & 9.672 & Minimal packets and one-way asymmetry \\
-DoS SlowHTTP & 2 & 9.155 & Long-lived, very low-rate connections \\
-DDoS Bot & 3 & 7.562 & Large asymmetric bot-driven floods \\
+DDoS TCP & 1 & 9.669 & Minimal packets and one-way asymmetry \\
+DoS SlowHTTP & 2 & 9.157 & Long-lived, very low-rate connections \\
+DDoS Bot & 3 & 7.581 & Large asymmetric bot-driven floods \\
 DoS Hulk & 4 & 7.416 & Burst-heavy HTTP flooding \\
-Normal & 5 & 5.640 & Broad but still identifiable balanced traffic \\
+Normal & 5 & 5.631 & Broad but still identifiable balanced traffic \\
 DDoS Dyn & 6 & 2.450 & Overlaps with broader DDoS intensity signals \\
 DDoS Stomp & 7 & 2.450 & Similar flooding profile to other DDoS variants \\
 Web XSS & 8 & 1.050 & Application-layer abuse resembles normal web sessions \\
@@ -408,14 +445,16 @@ Web Command Injection & 11 & -0.550 & Extremely rare; assignment states only 330
 \end{tabularx}
 \end{table}
 
-Severe imbalance shaped the cluster geometry. HDBSCAN found only five non-noise dense clusters and assigned 636 of 5,000 fitted rows to noise. GaussianMixture created 14 components including six microclusters with at most 100 rows. MiniBatchKMeans forced all rows into eight partitions with the largest cluster containing 29.86\% of rows. These patterns indicate that rare attack types are treated as noise by HDBSCAN, fragmented by GaussianMixture, or absorbed into larger clusters by MiniBatchKMeans. Payload features, HTTP request metadata, TLS fingerprints, and host context would be especially helpful for the rare web and MITM classes.
+Severe imbalance shaped the cluster geometry. HDBSCAN found only five non-noise dense clusters and assigned 2,458 of 20,000 fitted rows to noise. GaussianMixture created 11 components including two microclusters with at most 100 rows. MiniBatchKMeans forced all rows into eight partitions with the largest cluster containing 32.11\% of rows. These patterns indicate that rare attack types are treated as noise by HDBSCAN, fragmented by GaussianMixture, or absorbed into larger clusters by MiniBatchKMeans. Payload features, HTTP request metadata, TLS fingerprints, and host context would be especially helpful for the rare web and MITM classes.
+
+\clearpage
 
 \section{Task 3: Supervised Attack Classification}
 
 \subsection{Question 3.1: Baseline Models}
-For Task 3, the training corpus contained 746,617 labeled rows from \path{data/test/}, and the evaluation corpus contained 5,416,155 labeled rows from \path{data/raw_labeled/}. The baseline pipeline used 79 numeric features and no categorical features. Table~\ref{tab:q3_baselines} reports the required overall metrics for RandomForest, HistGradientBoosting, and MLP. RandomForest was the strongest baseline with macro F1 0.8449 and weighted F1 0.9364.
+For Task 3, the training corpus contained 746,617 labeled rows from \path{data/test/}, and the evaluation corpus contained 5,416,155 labeled rows from \path{data/raw_labeled/}. The baseline pipeline used 79 numeric features and no categorical features. Table~\ref{tab:q3_baselines} reports the required overall metrics for RandomForest, HistGradientBoosting, and MLP. HistGradientBoosting was used as the gradient-boosted tree baseline because the script falls back to scikit-learn's implementation when LightGBM/XGBoost native dependencies are unavailable. RandomForest was the strongest baseline with macro F1 0.8449 and weighted F1 0.9364.
 
-\begin{table}[!t]
+\begin{table}[H]
 \caption{Q3.1(a) baseline model comparison.}
 \label{tab:q3_baselines}
 \centering
@@ -499,10 +538,12 @@ For Q3.1(c), the best baseline RandomForest confusion matrix is shown in Figure~
 \label{fig:q3_confusion}
 \end{figure}
 
+\clearpage
+
 \subsection{Question 3.2: Handling Class Imbalance}
 I compared four RandomForest strategies: no balancing, selective SMOTE oversampling, class-weighted loss, and a hybrid SMOTE plus random undersampling strategy. Selective SMOTE oversampled classes below 25,000 training rows; the hybrid strategy capped the largest classes at 250,000 rows. Table~\ref{tab:q3_imbalance} shows that no balancing had the best macro F1, while oversampling modestly helped Infiltration MITM but hurt the two rare web classes relative to the already strong baseline.
 
-\begin{table}[!t]
+\begin{table}[H]
 \caption{Q3.2(a) imbalance-handling strategy comparison.}
 \label{tab:q3_imbalance}
 \centering
@@ -521,14 +562,14 @@ SMOTE + Undersampling & 59.051 & 0.9206 & 0.7046 & 0.8563 & 0.6951 & 0.9268 & 81
 
 For Q3.2(b), Figure~\ref{fig:q3_rare} shows rare-class F1 for Web Command Injection, Web SQL Injection, and Infiltration MITM. No balancing had the highest mean rare-class F1 at 0.8353 because the baseline already performed nearly perfectly on the two rare web classes. SMOTE improved Infiltration MITM from 0.5368 to 0.5950 but reduced Web Command Injection to 0.7341 and Web SQL Injection to 0.8786. Class weighting produced the largest precision collapse on rare web classes and also reduced majority-class F1.
 
-\begin{figure}[!t]
+\begin{figure}[H]
 \centering
 \includegraphics[width=0.86\linewidth]{q3_2b_rare_class_f1.png}
 \caption{Q3.2(b) rare-class F1 scores under the imbalance-handling strategies.}
 \label{fig:q3_rare}
 \end{figure}
 
-\begin{table}[!t]
+\begin{table}[H]
 \caption{Q3.2(b) rare-class and majority-class tradeoff summary.}
 \label{tab:q3_rare_summary}
 \centering
@@ -548,19 +589,46 @@ SMOTE + Undersampling & 0.4192 & 0.9289 & -0.0499 \\
 \subsection{Question 3.3: Advanced Model}
 The advanced model family used a tuned RandomForest backbone with optional Task 2 engineered features and per-class score calibration. The hyperparameter search considered original versus engineered feature sets, \texttt{max\_depth} in \{None, 24\}, \texttt{min\_samples\_leaf} in \{1, 2\}, and \texttt{class\_weight} in \{None, \texttt{balanced\_subsample}\}. The final selected configuration used original features only, 200 estimators, unrestricted depth, \texttt{min\_samples\_leaf=2}, no class weighting, and score multipliers for DDoS Bot and DDoS Dyn. Figure~\ref{fig:q3_arch} summarizes the architecture.
 
-\begin{figure}[!t]
+\begin{figure}[H]
 \centering
-\fbox{\begin{minipage}{0.9\linewidth}
-\centering
-Input flow $\rightarrow$ 79 original CICFlowMeter features $\rightarrow$ tuned RandomForest backbone $\rightarrow$ per-class score calibration $\rightarrow$ selected advanced prediction
-\end{minipage}}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{@{}c@{\quad}c@{\quad}c@{\quad}c@{\quad}c@{\quad}c@{\quad}c@{\quad}c@{\quad}c@{}}
+\fbox{\parbox{2.25cm}{\centering\textbf{Input}\\Flow record\\79 numeric features}} &
+$\rightarrow$ &
+\fbox{\parbox{2.45cm}{\centering\textbf{Feature Set}\\Original vs. engineered candidates\\mean imputation}} &
+$\rightarrow$ &
+\fbox{\parbox{2.55cm}{\centering\textbf{Backbone Search}\\RandomForest\\depth, leaf, weighting}} &
+$\rightarrow$ &
+\fbox{\parbox{2.45cm}{\centering\textbf{Score Calibration}\\per-class multipliers\\macro-F1 tuning}} &
+$\rightarrow$ &
+\fbox{\parbox{2.25cm}{\centering\textbf{Final Model}\\selected calibrated RF\\test inference}}
+\end{tabular}}
 \caption{Q3.3(a) advanced-model architecture. Candidate variants optionally added engineered features before the tuned RandomForest and calibration stage; the selected variant used original features only.}
 \label{fig:q3_arch}
 \end{figure}
 
+The development history matters for interpreting this result. The first advanced attempt, visible in the saved Task 3.3 postmortem and earlier git versions of the advanced-model script, used a more complex hybrid specialist design: a full RandomForest classifier, a binary web-traffic detector, and a kNN web-subtype specialist connected by an override rule. That model did not improve on the Q3.2 baseline. Macro F1 fell from 0.8449 to 0.5367 and accuracy fell from 0.9313 to 0.6576 because the web-specialist override fired on 1,496,705 evaluation rows, far more than the true rare web-attack subset. The override damaged both rare web precision and major non-web classes; for example, Web Command Injection precision fell to 0.0003 and DoS Hulk recall fell from 0.9985 to 0.2797. An ablation confirmed that the specialist was the main failure point: removing it raised macro F1 from 0.5367 to 0.6437, but still not enough to beat the simpler Q3.2 RandomForest. The final model therefore removed the specialist branch and kept only the tuned RandomForest with limited score calibration.
+
+\begin{table}[H]
+\caption{Q3.3(a) development history for the advanced model.}
+\label{tab:q3_advanced_history}
+\centering
+\small
+\begin{tabularx}{\linewidth}{@{}lrrY@{}}
+\toprule
+Attempt & Accuracy & Macro F1 & Interpretation \\
+\midrule
+Best Q3.2: No Balancing RF & 0.9313 & 0.8449 & Baseline to beat. \\
+Initial hybrid with web specialist & 0.6576 & 0.5367 & Too many web-specialist overrides; rare web precision and DoS Hulk recall collapsed. \\
+Hybrid without specialist ablation & N/A & 0.6437 & Removing the specialist helped, but the model remained below the baseline. \\
+Final calibrated RandomForest & 0.9540 & 0.8930 & Removed the specialist and used a tuned RF backbone with limited score calibration. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
 The final advanced model improved macro F1 from 0.8449 to 0.8930 relative to the best Q3.2 result. Table~\ref{tab:q3_advanced} reports the required test-set metrics, and Table~\ref{tab:q3_advanced_perclass} gives per-class performance. The largest class-level gains relative to the baseline were on Web XSS, DDoS Bot, DDoS Stomp, and Infiltration MITM.
 
-\begin{table}[!t]
+\begin{table}[H]
 \caption{Q3.3(a) final advanced-model metrics and comparison with best Q3.2 result.}
 \label{tab:q3_advanced}
 \centering
@@ -576,7 +644,7 @@ Delta & 0.0227 & 0.0291 & 0.0425 & 0.0481 & 0.0208 \\
 \end{tabular}
 \end{table}
 
-\begin{table}[!t]
+\begin{table}[H]
 \caption{Q3.3(a) per-class metrics for the final advanced model.}
 \label{tab:q3_advanced_perclass}
 \centering
@@ -602,7 +670,7 @@ Web-xss & 1.000 & 0.997 & 0.999 & 3069 \\
 
 For Q3.3(b), the ablation study in Table~\ref{tab:q3_ablation} shows that score calibration was important, engineered features did not help on the full evaluation corpus, and class weighting hurt substantially. The largest macro-F1 drop came from enabling class weighting, which reduced macro F1 by 0.2522 relative to the selected model.
 
-\begin{table}[!t]
+\begin{table}[H]
 \caption{Q3.3(b) ablation study.}
 \label{tab:q3_ablation}
 \centering
@@ -622,14 +690,14 @@ Enable Class Weighting & 0.9095 & 0.8705 & 0.6408 & -0.2522 \\
 \subsection{Question 3.4: Router-Level Analysis}
 For Q3.4(a), the selected advanced model was evaluated by router. Figure~\ref{fig:q3_router_heatmap} shows router-by-class F1, and Table~\ref{tab:q3_router_summary} summarizes router-level performance. D6 was the easiest router with macro F1 over present classes of 0.9995, largely because its test mix is concentrated in DoS Hulk and Normal. D10 was hardest with macro F1 over present classes of 0.7447, driven by weak DoS SlowHTTP and Infiltration MITM performance under a DDoS TCP-heavy mix.
 
-\begin{figure}[!t]
+\begin{figure}[H]
 \centering
 \includegraphics[width=0.92\linewidth]{q3_4a_router_class_f1_heatmap.png}
 \caption{Q3.4(a) per-router, per-class F1 heatmap for the selected advanced model.}
 \label{fig:q3_router_heatmap}
 \end{figure}
 
-\begin{table}[!t]
+\begin{table}[H]
 \caption{Q3.4(a) router-level performance summary. Macro F1 is computed over classes present at each router.}
 \label{tab:q3_router_summary}
 \centering
@@ -654,7 +722,7 @@ D10 & 1390856 & 4 & 0.926 & 0.959 & 0.745 & DDoS-tcp & 0.669 & DoS-slowhttp \\
 
 For Q3.4(b), I trained on routers D1--D7 and tested on unseen routers D8--D10. Table~\ref{tab:q3_cross_router} and Figure~\ref{fig:q3_cross_router} show a severe drop: macro F1 fell from 0.8930 in the standard evaluation to 0.4870 cross-router. The main reason is class coverage rather than general failure on shared traffic: DDoS TCP and DDoS Dyn were absent from the training routers but made up 53.7\% of the cross-router test rows. The model generalized well to shared classes on D8, but failed on unseen router-specific attack classes on D9 and D10. For distributed IDS deployment, this implies that training needs multi-router coverage, regular refreshes as routers come online, and monitoring for router-specific domain shift.
 
-\begin{table}[!t]
+\begin{table}[H]
 \caption{Q3.4(b) standard versus cross-router generalization metrics.}
 \label{tab:q3_cross_router}
 \centering
@@ -672,7 +740,7 @@ F1 weighted & 0.9571 & 0.4570 & -0.5002 \\
 \end{tabular}
 \end{table}
 
-\begin{figure}[!t]
+\begin{figure}[H]
 \centering
 \includegraphics[width=0.84\linewidth]{q3_4b_overall_metric_comparison.png}
 \caption{Q3.4(b) standard evaluation versus cross-router generalization on D8--D10.}

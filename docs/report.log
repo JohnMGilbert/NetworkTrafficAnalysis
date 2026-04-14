@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.3.22)  13 APR 2026 18:40
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.3.22)  14 APR 2026 11:43
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -288,16 +288,16 @@ ype png)
 Package pdftex.def Info: ../outputs/task1/figures/q1_1c_top10_feature_variance.
 png  used on input line 95.
 (pdftex.def)             Requested size: 443.76031pt x 292.28625pt.
-<../outputs/task1/figures/q1_2a_router_similarity_heatmap.png, id=4, 647.5392pt
- x 554.67226pt>
+ [1{/usr/local/texlive/2026/texmf-var/fonts/map/pdftex/updmap/pdftex.map}{/usr/
+local/texlive/2026/texmf-dist/fonts/enc/dvips/base/8r.enc}]
+<../outputs/task1/figures/q1_2a_router_similarity_heatmap.png, id=13, 749.07855
+pt x 651.51405pt>
 File: ../outputs/task1/figures/q1_2a_router_similarity_heatmap.png Graphic file
  (type png)
 <use ../outputs/task1/figures/q1_2a_router_similarity_heatmap.png>
 Package pdftex.def Info: ../outputs/task1/figures/q1_2a_router_similarity_heatm
 ap.png  used on input line 105.
-(pdftex.def)             Requested size: 371.52063pt x 318.24005pt.
- [1{/usr/local/texlive/2026/texmf-var/fonts/map/pdftex/updmap/pdftex.map}{/usr/
-local/texlive/2026/texmf-dist/fonts/enc/dvips/base/8r.enc}]
+(pdftex.def)             Requested size: 371.52063pt x 323.13173pt.
 <../outputs/task1/figures/q1_2b_adjacency_graphs.png, id=14, 1293.633pt x 569.8
 4895pt>
 File: ../outputs/task1/figures/q1_2b_adjacency_graphs.png Graphic file (type pn
@@ -306,13 +306,6 @@ g)
 Package pdftex.def Info: ../outputs/task1/figures/q1_2b_adjacency_graphs.png  u
 sed on input line 129.
 (pdftex.def)             Requested size: 474.71906pt x 209.11047pt.
-
-Overfull \hbox (19.49352pt too wide) in paragraph at lines 134--135
-[]\OT1/ptm/m/n/10 For Q1.2(c), I com-puted over-lap of source/destination IP se
-ts and Jac-card sim-i-lar-ity of \OT1/pcr/m/n/10 (src_port, dst_port, protocol)
-
- []
-
 <../outputs/task1/figures/q1_2c_ip_jaccard_heatmap.png, id=15, 644.8455pt x 566
 .0055pt>
 File: ../outputs/task1/figures/q1_2c_ip_jaccard_heatmap.png Graphic file (type 
@@ -336,13 +329,9 @@ File: ../outputs/task1/figures/q1_2c_refined_mst.png Graphic file (type png)
 Package pdftex.def Info: ../outputs/task1/figures/q1_2c_refined_mst.png  used o
 n input line 170.
 (pdftex.def)             Requested size: 371.52063pt x 312.01985pt.
-[2 <../outputs/task1/figures/q1_1b_volume_distributions.png>]
-
-LaTeX Warning: Text page 3 contains only floats.
-
-[3 <../outputs/task1/figures/q1_1c_top10_feature_variance.png> <../outputs/task
-1/figures/q1_2a_router_similarity_heatmap.png>]
-<../outputs/task1/figures/q1_3a_inferred_topology.png, id=27, 1277.0109pt x 563
+ [2 <../outputs/task1/figures/q1_1b_volume_distributions.png>] [3 <../outputs/t
+ask1/figures/q1_1c_top10_feature_variance.png>]
+<../outputs/task1/figures/q1_3a_inferred_topology.png, id=26, 1277.0109pt x 563
 .706pt>
 File: ../outputs/task1/figures/q1_3a_inferred_topology.png Graphic file (type p
 ng)
@@ -350,132 +339,149 @@ ng)
 Package pdftex.def Info: ../outputs/task1/figures/q1_3a_inferred_topology.png  
 used on input line 206.
 (pdftex.def)             Requested size: 474.71906pt x 209.54851pt.
- [4 <../outputs/task1/figures/q1_2b_adjacency_graphs.png>] [5 <../outputs/task1
-/figures/q1_2c_ip_jaccard_heatmap.png>]
+ [4 <../outputs/task1/figures/q1_2a_router_similarity_heatmap.png> <../outputs/
+task1/figures/q1_2b_adjacency_graphs.png>] [5 <../outputs/task1/figures/q1_2c_i
+p_jaccard_heatmap.png>]
 <../outputs/task2/figures/q2_1b_pca_cumulative_variance.png, id=36, 578.16pt x 
 361.35pt>
 File: ../outputs/task2/figures/q2_1b_pca_cumulative_variance.png Graphic file (
 type png)
 <use ../outputs/task2/figures/q2_1b_pca_cumulative_variance.png>
 Package pdftex.def Info: ../outputs/task2/figures/q2_1b_pca_cumulative_variance
-.png  used on input line 281.
+.png  used on input line 283.
 (pdftex.def)             Requested size: 371.52063pt x 232.20055pt.
- [6 <../outputs/task1/figures/q1_2c_tuple_jaccard_heatmap.png>]
-<../outputs/task2/figures/q2_1b_umap_router_embedding.png, id=41, 859.6845pt x 
+<../outputs/task2/figures/q2_1b_umap_router_embedding.png, id=37, 859.6845pt x 
 568.962pt>
 File: ../outputs/task2/figures/q2_1b_umap_router_embedding.png Graphic file (ty
 pe png)
 <use ../outputs/task2/figures/q2_1b_umap_router_embedding.png>
 Package pdftex.def Info: ../outputs/task2/figures/q2_1b_umap_router_embedding.p
-ng  used on input line 288.
+ng  used on input line 290.
 (pdftex.def)             Requested size: 402.47937pt x 266.37906pt.
+ [6 <../outputs/task1/figures/q1_2c_tuple_jaccard_heatmap.png>] [7 <../outputs/
+task1/figures/q1_2c_refined_mst.png> <../outputs/task1/figures/q1_3a_inferred_t
+opology.png>] [8 <../outputs/task2/figures/q2_1b_pca_cumulative_variance.png>] 
+[9 <../outputs/task2/figures/q2_1b_umap_router_embedding.png>]
 <../outputs/task2/figures/q2_2c_hdbscan_engineered_feature_distributions.png, i
-d=42, 1148.436pt x 741.4245pt>
+d=56, 1148.436pt x 741.4245pt>
 File: ../outputs/task2/figures/q2_2c_hdbscan_engineered_feature_distributions.p
 ng Graphic file (type png)
 <use ../outputs/task2/figures/q2_2c_hdbscan_engineered_feature_distributions.pn
 g>
 Package pdftex.def Info: ../outputs/task2/figures/q2_2c_hdbscan_engineered_feat
-ure_distributions.png  used on input line 314.
+ure_distributions.png  used on input line 318.
 (pdftex.def)             Requested size: 474.71906pt x 306.47491pt.
- [7 <../outputs/task1/figures/q1_2c_refined_mst.png> <../outputs/task1/figures/
-q1_3a_inferred_topology.png>]
-<../outputs/task2/figures/q2_2a_cluster_embedding_comparison.png, id=49, 1292.9
-76pt x 407.6685pt>
-File: ../outputs/task2/figures/q2_2a_cluster_embedding_comparison.png Graphic f
-ile (type png)
-<use ../outputs/task2/figures/q2_2a_cluster_embedding_comparison.png>
-Package pdftex.def Info: ../outputs/task2/figures/q2_2a_cluster_embedding_compa
-rison.png  used on input line 340.
-(pdftex.def)             Requested size: 495.36346pt x 156.18462pt.
- [8 <../outputs/task2/figures/q2_1b_pca_cumulative_variance.png> <../outputs/ta
-sk2/figures/q2_1b_umap_router_embedding.png>] [9 <../outputs/task2/figures/q2_2
-c_hdbscan_engineered_feature_distributions.png>] [10 <../outputs/task2/figures/
-q2_2a_cluster_embedding_comparison.png>]
-<../outputs/task3/figures/q3_1b_top20_feature_importance.png, id=63, 786.7575pt
+ [10
+
+ <../outputs/task2/figures/q2_2c_hdbscan_engineered_feature_distributions.png>]
+<../outputs/task2/figures/q2_2a_minibatchkmeans_clusters.png, id=61, 570.276pt 
+x 423.4365pt>
+File: ../outputs/task2/figures/q2_2a_minibatchkmeans_clusters.png Graphic file 
+(type png)
+<use ../outputs/task2/figures/q2_2a_minibatchkmeans_clusters.png>
+Package pdftex.def Info: ../outputs/task2/figures/q2_2a_minibatchkmeans_cluster
+s.png  used on input line 344.
+(pdftex.def)             Requested size: 423.12378pt x 314.1845pt.
+<../outputs/task2/figures/q2_2a_hdbscan_clusters.png, id=62, 570.276pt x 423.43
+65pt>
+File: ../outputs/task2/figures/q2_2a_hdbscan_clusters.png Graphic file (type pn
+g)
+<use ../outputs/task2/figures/q2_2a_hdbscan_clusters.png>
+Package pdftex.def Info: ../outputs/task2/figures/q2_2a_hdbscan_clusters.png  u
+sed on input line 351.
+(pdftex.def)             Requested size: 423.12378pt x 314.1845pt.
+ [11 <../outputs/task2/figures/q2_2a_minibatchkmeans_clusters.png>]
+<../outputs/task2/figures/q2_2a_gaussianmixture_clusters.png, id=67, 570.276pt 
+x 423.4365pt>
+File: ../outputs/task2/figures/q2_2a_gaussianmixture_clusters.png Graphic file 
+(type png)
+<use ../outputs/task2/figures/q2_2a_gaussianmixture_clusters.png>
+Package pdftex.def Info: ../outputs/task2/figures/q2_2a_gaussianmixture_cluster
+s.png  used on input line 358.
+(pdftex.def)             Requested size: 423.12378pt x 314.1845pt.
+ [12 <../outputs/task2/figures/q2_2a_hdbscan_clusters.png> <../outputs/task2/fi
+gures/q2_2a_gaussianmixture_clusters.png>] [13] [14]
+<../outputs/task3/figures/q3_1b_top20_feature_importance.png, id=80, 786.7575pt
  x 605.097pt>
 File: ../outputs/task3/figures/q3_1b_top20_feature_importance.png Graphic file 
 (type png)
 <use ../outputs/task3/figures/q3_1b_top20_feature_importance.png>
 Package pdftex.def Info: ../outputs/task3/figures/q3_1b_top20_feature_importanc
-e.png  used on input line 488.
+e.png  used on input line 527.
 (pdftex.def)             Requested size: 443.76031pt x 341.29875pt.
-<../outputs/task3/figures/q3_1c_confusion_matrix.png, id=64, 742.41pt x 641.232
+<../outputs/task3/figures/q3_1c_confusion_matrix.png, id=81, 742.41pt x 641.232
 pt>
 File: ../outputs/task3/figures/q3_1c_confusion_matrix.png Graphic file (type pn
 g)
 <use ../outputs/task3/figures/q3_1c_confusion_matrix.png>
 Package pdftex.def Info: ../outputs/task3/figures/q3_1c_confusion_matrix.png  u
-sed on input line 497.
+sed on input line 536.
 (pdftex.def)             Requested size: 402.47937pt x 347.62016pt.
-<../outputs/task3/figures/q3_2b_rare_class_f1.png, id=65, 858.92896pt x 497.578
+ [15
+
+] [16 <../outputs/task3/figures/q3_1b_top20_feature_importance.png>] [17 <../ou
+tputs/task3/figures/q3_1c_confusion_matrix.png>]
+<../outputs/task3/figures/q3_2b_rare_class_f1.png, id=93, 858.92896pt x 497.578
 95pt>
 File: ../outputs/task3/figures/q3_2b_rare_class_f1.png Graphic file (type png)
 <use ../outputs/task3/figures/q3_2b_rare_class_f1.png>
 Package pdftex.def Info: ../outputs/task3/figures/q3_2b_rare_class_f1.png  used
- on input line 526.
+ on input line 567.
 (pdftex.def)             Requested size: 443.76031pt x 257.0722pt.
 LaTeX Font Info:    Trying to load font information for OMS+ptm on input line 5
-49.
+90.
 
 (/usr/local/texlive/2026/texmf-dist/tex/latex/psnfss/omsptm.fd
 File: omsptm.fd 
 )
 LaTeX Font Info:    Font shape `OMS/ptm/m/n' in size <10> not available
-(Font)              Font shape `OMS/cmsy/m/n' tried instead on input line 549.
+(Font)              Font shape `OMS/cmsy/m/n' tried instead on input line 590.
+ [18
 
-Overfull \vbox (255.53989pt too high) has occurred while \output is active []
-
-
-[11] [12 <../outputs/task3/figures/q3_1b_top20_feature_importance.png>]
-
-LaTeX Warning: Text page 13 contains only floats.
-
-[13 <../outputs/task3/figures/q3_1c_confusion_matrix.png> <../outputs/task3/fig
-ures/q3_2b_rare_class_f1.png>]
-<../outputs/task3/figures/q3_4a_router_class_f1_heatmap.png, id=80, 1072.84814p
-t x 497.9403pt>
+ <../outputs/task3/figures/q3_2b_rare_class_f1.png>] [19]
+<../outputs/task3/figures/q3_4a_router_class_f1_heatmap.png, id=103, 1072.84814
+pt x 497.9403pt>
 File: ../outputs/task3/figures/q3_4a_router_class_f1_heatmap.png Graphic file (
 type png)
 <use ../outputs/task3/figures/q3_4a_router_class_f1_heatmap.png>
 Package pdftex.def Info: ../outputs/task3/figures/q3_4a_router_class_f1_heatmap
-.png  used on input line 627.
+.png  used on input line 695.
 (pdftex.def)             Requested size: 474.71906pt x 220.32527pt.
-<../outputs/task3/figures/q3_4b_overall_metric_comparison.png, id=81, 786.65895
-pt x 426.03165pt>
+ [20 <../outputs/task3/figures/q3_4a_router_class_f1_heatmap.png>]
+<../outputs/task3/figures/q3_4b_overall_metric_comparison.png, id=108, 786.6589
+5pt x 426.03165pt>
 File: ../outputs/task3/figures/q3_4b_overall_metric_comparison.png Graphic file
  (type png)
 <use ../outputs/task3/figures/q3_4b_overall_metric_comparison.png>
 Package pdftex.def Info: ../outputs/task3/figures/q3_4b_overall_metric_comparis
-on.png  used on input line 677.
+on.png  used on input line 745.
 (pdftex.def)             Requested size: 433.43811pt x 234.73418pt.
- [14] [15 <../outputs/task3/figures/q3_4a_router_class_f1_heatmap.png> <../outp
-uts/task3/figures/q3_4b_overall_metric_comparison.png>]
+ [21 <../outputs/task3/figures/q3_4b_overall_metric_comparison.png>]
 LaTeX Font Info:    External font `cmex10' loaded for size
-(Font)              <8> on input line 691.
- [16] (./report.aux)
+(Font)              <8> on input line 759.
+ [22] (./report.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
  ***********
  ) 
 Here is how much of TeX's memory you used:
- 2896 strings out of 467525
- 56574 string characters out of 5418982
- 492331 words of memory out of 5000000
- 31795 multiletter control sequences out of 15000+600000
- 664667 words of font info for 108 fonts, out of 8000000 for 9000
+ 2918 strings out of 467525
+ 57604 string characters out of 5418982
+ 476968 words of memory out of 5000000
+ 31816 multiletter control sequences out of 15000+600000
+ 665774 words of font info for 109 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
- 57i,10n,65p,883b,340s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 57i,14n,65p,1120b,340s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb
 ></usr/local/texlive/2026/texmf-dist/fonts/type1/urw/courier/ucrr8a.pfb></usr/l
 ocal/texlive/2026/texmf-dist/fonts/type1/urw/times/utmb8a.pfb></usr/local/texli
 ve/2026/texmf-dist/fonts/type1/urw/times/utmr8a.pfb></usr/local/texlive/2026/te
 xmf-dist/fonts/type1/urw/times/utmri8a.pfb>
-Output written on report.pdf (16 pages, 3825921 bytes).
+Output written on report.pdf (22 pages, 4141127 bytes).
 PDF statistics:
- 117 PDF objects out of 1000 (max. 8388607)
- 54 compressed objects within 1 object stream
+ 140 PDF objects out of 1000 (max. 8388607)
+ 67 compressed objects within 1 object stream
  0 named destinations out of 1000 (max. 500000)
- 86 words of extra memory for PDF output out of 10000 (max. 10000000)
+ 96 words of extra memory for PDF output out of 10000 (max. 10000000)
 
