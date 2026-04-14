@@ -28,7 +28,9 @@ Use this directory for topology reconstruction experiments, notes, and task-spec
 - `outputs/task1/tables/q1_2c_pairwise_overlap_summary.csv`
 - `outputs/task1/tables/q1_2c_refined_graph_edges.csv`
 - `outputs/task1/tables/q1_2c_discussion.md`
-- `outputs/task1/figures/q1_2c_ip_overlap_analysis.png`
+- `outputs/task1/figures/q1_2c_ip_jaccard_heatmap.png`
+- `outputs/task1/figures/q1_2c_tuple_jaccard_heatmap.png`
+- `outputs/task1/figures/q1_2c_refined_mst.png`
 - `outputs/task1/tables/q1_3a_pair_scores.csv`
 - `outputs/task1/tables/q1_3a_inferred_topology_edges.csv`
 - `outputs/task1/tables/q1_3a_discussion.md`

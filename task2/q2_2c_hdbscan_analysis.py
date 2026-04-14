@@ -15,6 +15,10 @@ os.environ.setdefault("XDG_CACHE_HOME", "/tmp")
 
 import numpy as np
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -28,6 +32,12 @@ from task2.q2_2a_clustering import stratified_indices_by_router
 
 
 LOGGER = logging.getLogger("task2.q2_2c")
+ENGINEERED_FEATURES = [
+    "directional_byte_imbalance",
+    "bytes_per_packet",
+    "burst_idle_log_ratio",
+    "packet_size_asymmetry",
+]
 KNOWN_CLASSES = [
     "Normal",
     "DDoS Bot",
@@ -87,6 +97,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=CONFIG.outputs_dir / "task2" / "tables",
         help="Directory for generated Task 2.2(c) tables and reports.",
+    )
+    parser.add_argument(
+        "--figure-dir",
+        type=Path,
+        default=CONFIG.outputs_dir / "task2" / "figures",
+        help="Directory for generated Task 2.2(c) figures.",
     )
     return parser.parse_args()
 
@@ -196,6 +212,77 @@ def build_cluster_statistics(analysis: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def build_engineered_distribution_table(analysis: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    for cluster_label in sorted(analysis["cluster_label"].unique()):
+        cluster = analysis[analysis["cluster_label"] == cluster_label]
+        for feature in ENGINEERED_FEATURES:
+            series = cluster[feature]
+            rows.append(
+                {
+                    "cluster_label": int(cluster_label),
+                    "feature": feature,
+                    "rows": int(series.size),
+                    "mean": round(float(series.mean()), 6),
+                    "std": round(float(series.std(ddof=0)), 6),
+                    "p05": round(float(series.quantile(0.05)), 6),
+                    "median": round(float(series.quantile(0.50)), 6),
+                    "p95": round(float(series.quantile(0.95)), 6),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def save_engineered_distribution_plot(
+    analysis: pd.DataFrame,
+    figure_path: Path,
+    mapping: pd.DataFrame | None = None,
+) -> None:
+    plot_frame = analysis[["cluster_label", *ENGINEERED_FEATURES]].copy()
+    plot_frame["cluster_label"] = plot_frame["cluster_label"].astype(str)
+    cluster_order = sorted(plot_frame["cluster_label"].unique(), key=lambda value: int(value))
+    label_lookup = {}
+    if mapping is not None and {"cluster_label", "predicted_label"}.issubset(mapping.columns):
+        label_lookup = {
+            str(int(row["cluster_label"])): str(row["predicted_label"])
+            for _, row in mapping.iterrows()
+        }
+    display_label_lookup = {
+        cluster_label: f"{cluster_label}\n{label_lookup.get(cluster_label, 'Unmapped')}"
+        for cluster_label in cluster_order
+    }
+    plot_frame["cluster_display_label"] = plot_frame["cluster_label"].map(display_label_lookup)
+    display_order = [display_label_lookup[cluster_label] for cluster_label in cluster_order]
+
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10), sharex=True)
+    axes = axes.ravel()
+    palette = dict(zip(display_order, sns.color_palette("Set2", n_colors=len(display_order)), strict=True))
+
+    for axis, feature in zip(axes, ENGINEERED_FEATURES, strict=True):
+        sns.boxplot(
+            data=plot_frame,
+            x="cluster_display_label",
+            y=feature,
+            hue="cluster_display_label",
+            order=display_order,
+            hue_order=display_order,
+            palette=palette,
+            fliersize=1,
+            linewidth=0.7,
+            legend=False,
+            ax=axis,
+        )
+        axis.set_title(feature.replace("_", " ").title())
+        axis.set_xlabel("HDBSCAN Cluster and Mapped Label")
+        axis.set_ylabel("Value")
+        axis.tick_params(axis="x", labelsize=8)
+
+    fig.suptitle("Task 2.1(c)/2.2(c): Engineered Feature Distributions Across HDBSCAN Clusters", y=1.02)
+    fig.tight_layout()
+    fig.savefig(figure_path, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+
+
 def assign_semantic_label(row: pd.Series) -> tuple[str, str, str]:
     cluster_label = int(row["cluster_label"])
     duration = float(row["mean_flow_duration"])
@@ -297,6 +384,8 @@ def write_report(
     output_path: Path,
     cluster_stats: pd.DataFrame,
     mapping: pd.DataFrame,
+    engineered_distribution_path: Path,
+    engineered_distribution_figure_path: Path,
 ) -> None:
     lines = [
         "# Task 2.2(c) HDBSCAN Cluster Analysis",
@@ -313,6 +402,15 @@ def write_report(
             "The `protocol` feature was removed during preprocessing because it had zero variance in the dataset, so the "
             "cluster profiles emphasize ports, packet counts, byte counts, flow duration, and directional asymmetry instead."
         ),
+        "",
+        "## Engineered Feature Distribution Check",
+        (
+            "The four engineered features from Question 2.1(c) were recomputed on the fitted HDBSCAN sample after "
+            "inverse-transforming the original flow fields. Their per-cluster quantiles and boxplot provide the final "
+            "distribution-across-discovered-clusters artifact requested in Question 2.1(c)."
+        ),
+        f"- Distribution table: `{engineered_distribution_path}`",
+        f"- Distribution figure: `{engineered_distribution_figure_path}`",
         "",
         "## Cluster Label Mapping",
     ]
@@ -341,6 +439,7 @@ def main() -> None:
     args = parse_args()
     configure_logging()
     ensure_directory(args.table_dir)
+    ensure_directory(args.figure_dir)
 
     fit_rows = parse_q2_2a_summary(args.q2_2a_summary_path)
     fit_sample, _ = reconstruct_fit_sample(
@@ -358,24 +457,37 @@ def main() -> None:
 
     analysis = build_analysis_frame(fit_sample, assignments, scaler)
     cluster_stats = build_cluster_statistics(analysis)
+    engineered_distribution = build_engineered_distribution_table(analysis)
     mapping = build_mapping_table(cluster_stats)
     confusion_style = build_confusion_style_mapping(mapping)
 
     cluster_stats.to_csv(args.table_dir / "q2_2c_hdbscan_cluster_statistics.csv", index=False)
+    engineered_distribution_path = args.table_dir / "q2_2c_hdbscan_engineered_feature_distributions.csv"
+    engineered_distribution.to_csv(engineered_distribution_path, index=False)
     mapping.to_csv(args.table_dir / "q2_2c_hdbscan_cluster_mapping.csv", index=False)
     confusion_style.to_csv(args.table_dir / "q2_2c_hdbscan_confusion_style_mapping.csv", index=False)
+    engineered_distribution_figure_path = args.figure_dir / "q2_2c_hdbscan_engineered_feature_distributions.png"
+    save_engineered_distribution_plot(analysis, engineered_distribution_figure_path, mapping)
 
     summary_payload = {
         "best_algorithm": "HDBSCAN",
         "cluster_count_excluding_noise": int((cluster_stats["cluster_label"] != -1).sum()),
         "noise_cluster_present": bool((cluster_stats["cluster_label"] == -1).any()),
+        "engineered_feature_distribution_table": str(engineered_distribution_path),
+        "engineered_feature_distribution_figure": str(engineered_distribution_figure_path),
         "clusters": cluster_stats.merge(mapping, on="cluster_label").to_dict(orient="records"),
     }
     (args.table_dir / "q2_2c_hdbscan_summary.json").write_text(
         json.dumps(summary_payload, indent=2),
         encoding="utf-8",
     )
-    write_report(args.table_dir / "q2_2c_hdbscan_report.md", cluster_stats, mapping)
+    write_report(
+        args.table_dir / "q2_2c_hdbscan_report.md",
+        cluster_stats,
+        mapping,
+        engineered_distribution_path,
+        engineered_distribution_figure_path,
+    )
     LOGGER.info("Task 2.2(c) HDBSCAN artifacts written to %s.", args.table_dir)
 
 

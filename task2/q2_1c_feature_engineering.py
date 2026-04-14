@@ -7,6 +7,7 @@ import json
 import logging
 import math
 import os
+import re
 import sys
 from collections import Counter
 from dataclasses import dataclass
@@ -40,6 +41,8 @@ from src.common.seed import set_global_seed
 
 LOGGER = logging.getLogger("task2.q2_1c")
 EPSILON = 1.0
+ROUTER_SUFFIX_PATTERN = re.compile(r"(?:^|[-_])D?(\d+)$", flags=re.IGNORECASE)
+ROUTER_LABEL_PATTERN = re.compile(r"^D(\d+)$", flags=re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -167,6 +170,14 @@ def target_sample_counts(router_counts: Counter[str], sample_size: int) -> dict[
     return targets
 
 
+def router_sort_key(router_id: object) -> tuple[int, int | str]:
+    text = str(router_id)
+    match = ROUTER_LABEL_PATTERN.match(text)
+    if match:
+        return (0, int(match.group(1)))
+    return (1, text)
+
+
 def iter_router_frames(path: Path, chunksize: int):
     if path.suffix.lower() == ".parquet":
         yield normalize_columns(pd.read_parquet(path))
@@ -190,6 +201,9 @@ def duplicate_mask_from_hashes(hashes: np.ndarray, seen_hashes: set[int]) -> np.
 
 
 def infer_router_id(path: Path) -> str:
+    match = ROUTER_SUFFIX_PATTERN.search(path.stem)
+    if match:
+        return f"D{int(match.group(1))}"
     return path.stem
 
 
@@ -303,7 +317,7 @@ def build_engineered_feature_sample(
             "population_rows": [router_counts[router_id] for router_id in router_counts],
             "sample_rows": [targets[router_id] for router_id in router_counts],
         }
-    ).sort_values("router_id", ignore_index=True)
+    ).sort_values("router_id", key=lambda series: series.map(router_sort_key), ignore_index=True)
     counts = {
         "unique_rows_seen": unique_rows,
         "duplicate_rows_skipped": duplicate_rows,
@@ -417,10 +431,10 @@ def write_report(
     lines.extend(
         [
             "## Sampling and visualization",
-            f"- Engineered features were computed from raw deduplicated flows, skipping {sample_counts['duplicate_rows_skipped']:,} duplicates detected in Question 2.1(a).",
+            f"- Engineered features were computed from raw deduplicated flows after normalizing filename shards to `D1` through `D10`, skipping {sample_counts['duplicate_rows_skipped']:,} duplicates detected in Question 2.1(a).",
             f"- A stratified sample of {sample_counts['sample_rows']:,} flows was drawn for visualization, preserving the deduplicated router distribution.",
-            f"- To satisfy the cluster-distribution requirement before Question 2.2 is completed, a provisional MiniBatchKMeans preview with k={preview_clusters} was used only for visualization of the engineered features.",
-            "- Final clustering model selection and final semantic cluster interpretation will be completed in Question 2.2.",
+            f"- A provisional MiniBatchKMeans preview with k={preview_clusters} is kept here as an early visualization of engineered-feature behavior.",
+            "- The final distribution-across-discovered-clusters artifact is produced by Question 2.2(c) after HDBSCAN cluster assignments are available.",
             "",
         ]
     )

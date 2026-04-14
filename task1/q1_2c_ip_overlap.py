@@ -206,31 +206,70 @@ def draw_graph(ax: plt.Axes, graph: nx.Graph, title: str) -> None:
     ax.axis("off")
 
 
-def make_figure(ip_matrix: pd.DataFrame, tuple_matrix: pd.DataFrame, refined_graph: nx.Graph, figure_dir: Path) -> Path:
-    sns.set_theme(style="white", context="talk")
-    fig = plt.figure(figsize=(20, 7))
-    gs = fig.add_gridspec(1, 3, width_ratios=[1.1, 1.1, 1.2])
-    ax1 = fig.add_subplot(gs[0, 0])
-    ax2 = fig.add_subplot(gs[0, 1])
-    ax3 = fig.add_subplot(gs[0, 2])
-
-    sns.heatmap(ip_matrix, annot=True, fmt=".2f", cmap="Blues", vmin=0.0, vmax=1.0, square=True, ax=ax1, cbar_kws={"label": "IP Jaccard"})
-    ax1.set_title("Combined IP-Set Overlap")
-    ax1.set_xlabel("Router")
-    ax1.set_ylabel("Router")
-
-    sns.heatmap(tuple_matrix, annot=True, fmt=".2f", cmap="Greens", vmin=0.0, vmax=1.0, square=True, ax=ax2, cbar_kws={"label": "Tuple Jaccard"})
-    ax2.set_title("(src_port, dst_port, protocol) Overlap")
-    ax2.set_xlabel("Router")
-    ax2.set_ylabel("Router")
-
-    draw_graph(ax3, refined_graph, "Refined MST (Feature + IP + Tuple Evidence)")
+def save_overlap_heatmap(
+    matrix: pd.DataFrame,
+    figure_path: Path,
+    title: str,
+    color_map: str,
+    colorbar_label: str,
+) -> Path:
+    fig, ax = plt.subplots(figsize=(9.5, 8.5))
+    sns.heatmap(
+        matrix,
+        annot=True,
+        fmt=".2f",
+        cmap=color_map,
+        vmin=0.0,
+        vmax=1.0,
+        square=True,
+        linewidths=0.35,
+        linecolor="white",
+        annot_kws={"size": 9},
+        cbar_kws={"label": colorbar_label, "shrink": 0.78},
+        ax=ax,
+    )
+    ax.set_title(title, fontsize=15, pad=12)
+    ax.set_xlabel("Router")
+    ax.set_ylabel("Router")
+    ax.tick_params(axis="x", rotation=0, labelsize=10)
+    ax.tick_params(axis="y", rotation=0, labelsize=10)
     fig.tight_layout()
-
-    output_path = figure_dir / "q1_2c_ip_overlap_analysis.png"
-    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    fig.savefig(figure_path, dpi=220, bbox_inches="tight")
     plt.close(fig)
-    return output_path
+    return figure_path
+
+
+def save_refined_graph_figure(refined_graph: nx.Graph, figure_path: Path) -> Path:
+    fig, ax = plt.subplots(figsize=(9.5, 8.0))
+    draw_graph(ax, refined_graph, "Refined MST (Feature + IP + Tuple Evidence)")
+    fig.tight_layout()
+    fig.savefig(figure_path, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+    return figure_path
+
+
+def make_figure(ip_matrix: pd.DataFrame, tuple_matrix: pd.DataFrame, refined_graph: nx.Graph, figure_dir: Path) -> dict[str, Path]:
+    sns.set_theme(style="white", context="notebook")
+    return {
+        "ip_heatmap": save_overlap_heatmap(
+            ip_matrix,
+            figure_dir / "q1_2c_ip_jaccard_heatmap.png",
+            "Combined IP-Set Overlap",
+            "Blues",
+            "IP Jaccard",
+        ),
+        "tuple_heatmap": save_overlap_heatmap(
+            tuple_matrix,
+            figure_dir / "q1_2c_tuple_jaccard_heatmap.png",
+            "(src_port, dst_port, protocol) Tuple Overlap",
+            "Greens",
+            "Tuple Jaccard",
+        ),
+        "refined_graph": save_refined_graph_figure(
+            refined_graph,
+            figure_dir / "q1_2c_refined_mst.png",
+        ),
+    }
 
 
 def main() -> None:
@@ -271,14 +310,15 @@ def main() -> None:
     pairwise.to_csv(pairwise_path, index=False)
     edge_table(refined_mst).to_csv(refined_edges_path, index=False)
     discussion_path.write_text(build_discussion(pairwise, comparison), encoding="utf-8")
-    figure_path = make_figure(ip_matrix, tuple_matrix, refined_mst, figure_dir)
+    figure_paths = make_figure(ip_matrix, tuple_matrix, refined_mst, figure_dir)
 
     print(f"Wrote IP Jaccard matrix to {ip_matrix_path}")
     print(f"Wrote tuple Jaccard matrix to {tuple_matrix_path}")
     print(f"Wrote pairwise overlap summary to {pairwise_path}")
     print(f"Wrote refined graph edges to {refined_edges_path}")
     print(f"Wrote discussion notes to {discussion_path}")
-    print(f"Wrote figure to {figure_path}")
+    for figure_name, figure_path in figure_paths.items():
+        print(f"Wrote {figure_name} figure to {figure_path}")
 
 
 if __name__ == "__main__":

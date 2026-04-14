@@ -1,0 +1,702 @@
+\documentclass[journal,onecolumn]{IEEEtran}
+
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{url}
+\usepackage{float}
+
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\graphicspath{{../outputs/task1/figures/}{../outputs/task2/figures/}{../outputs/task3/figures/}}
+
+\title{Network Traffic Analysis, Attack Discovery, and Classification Using FLNET2023}
+\author{John Gilbert}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This report presents a complete solution for the CSCI 5840 Computer Networks II network traffic analysis assignment using the FLNET2023 dataset. The work first reconstructs an approximate topology for the ten observed data-collecting routers using traffic-volume, feature-similarity, IP-overlap, and graph-analysis evidence. It then performs unsupervised attack discovery on the unlabeled traffic, comparing partitional, density-based, and model-based clustering. Finally, after labels are available, it trains supervised intrusion-detection models, evaluates class-imbalance strategies, develops an advanced calibrated random-forest model, and studies router-level generalization. The strongest supervised model reached 0.954 accuracy, 0.880 macro precision, 0.943 macro recall, 0.893 macro F1, and 0.957 weighted F1 on the labeled evaluation corpus.
+\end{abstract}
+
+\section{Introduction}
+FLNET2023 is a flow-based network intrusion dataset generated from an emulation of the GEANT-2012 topology. In the assignment setting, ten routers D1--D10 collect CICFlowMeter-style flow records, initially with labels removed. The report follows the requested three-part structure: Task 1 reconstructs router topology; Task 2 discovers and semantically maps attacks without labels; and Task 3 uses labels for supervised multi-class attack classification.
+
+All task scripts write reproducible tables and figures under \path{outputs/}. The report uses those artifacts directly and keeps the same router identifiers, class names, and sampling choices as the code. The report uses the IEEEtran one-column LaTeX template as required.
+
+\section{Task 1: Network Topology Reconstruction}
+
+\subsection{Question 1.1: Exploratory Data Analysis}
+For each router, I computed flow counts, raw flow-duration summary statistics, the five most frequent destination ports, and the total forward-to-backward packet ratio. Table~\ref{tab:q1_router_summary} shows the required summary. D10 carries the largest flow volume with 1,390,856 records, D8 has the highest mean duration, and D5 has the strongest forward/backward packet asymmetry. These differences suggest that the routers do not observe interchangeable traffic roles: D10 and D5 behave more like high-volume or aggregation vantage points, while D3 observes mostly short, low-volume flows.
+
+\begin{table}[H]
+\caption{Q1.1(a) per-router exploratory summary. Duration values are reported in the raw CICFlowMeter units used by the dataset.}
+\label{tab:q1_router_summary}
+\centering
+\scriptsize
+\begin{tabularx}{\linewidth}{@{}lrrrrrrrY@{}}
+\toprule
+Router & Flows & Min & Max & Mean & Median & Std & F/B & Top-5 destination ports \\
+\midrule
+D1 & 205215 & 0 & 128510312 & 12767890 & 77 & 25386691 & 2.244 & 5050, 5001, 5002, 5004, 5003 \\
+D2 & 495778 & 0 & 129813622 & 11540025 & 13106609 & 9927155 & 1.460 & 5000, 7054, 6051, 7400, 5353 \\
+D3 & 221390 & 0 & 122032241 & 6515526 & 23 & 20409582 & 1.887 & 7002, 7003, 6053, 5051, 7005 \\
+D4 & 457963 & 0 & 121983284 & 15169981 & 15096316 & 13491365 & 1.464 & 2048, 7004, 7100, 7600, 6065 \\
+D5 & 521364 & 0 & 122202516 & 1877577 & 3994 & 3512127 & 2.828 & 8080, 5002, 6004, 7005, 5353 \\
+D6 & 611942 & 0 & 22326336 & 9043107 & 10786316 & 7754329 & 1.460 & 5000, 7051, 7053, 5002, 7054 \\
+D7 & 566758 & 0 & 122077234 & 12235674 & 44 & 15723953 & 1.461 & 6060, 7051, 7002, 7054, 5052 \\
+D8 & 470708 & 0 & 120751444 & 15822451 & 84 & 17704330 & 1.453 & 7123, 7053, 5002, 6050, 7052 \\
+D9 & 474181 & 0 & 121984841 & 10975938 & 11646 & 15531059 & 2.348 & 5055, 6050, 7052, 6003, 5003 \\
+D10 & 1390856 & 0 & 122029684 & 2086078 & 309 & 6504551 & 1.736 & 7777, 6003, 6004, 6001, 6002 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Traffic volume was computed as total forward plus backward bytes per flow. Figure~\ref{fig:q1_volume} shows the overlaid distribution summary. D5 has the highest median per-flow volume at 59,358 bytes, while D1 has the heaviest upper tail with a 99th percentile of 496,303.52 bytes. D3 has the lowest median volume at 224 bytes. High medians and high upper quantiles are stronger signs of aggregation or transit roles; low medians with long tails look more edge-like, with occasional bulk transfers.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.92\linewidth]{q1_1b_volume_distributions.png}
+\caption{Q1.1(b) per-router traffic-volume distributions using total bytes per flow.}
+\label{fig:q1_volume}
+\end{figure}
+
+For feature variance, I used a one-way ANOVA-style ratio: between-router mean-square variation divided by within-router mean-square variation. Identifier and timestamp fields were excluded. Table~\ref{tab:q1_top_features} and Figure~\ref{fig:q1_variance} show that packet-size, byte-rate, and packet-rate fields separate routers most strongly, which is consistent with the idea that collectors observe different application mixes and backbone roles.
+
+\begin{table}[!t]
+\caption{Q1.1(c) top features by between-router to within-router variance ratio.}
+\label{tab:q1_top_features}
+\centering
+\small
+\begin{tabularx}{0.92\linewidth}{@{}lrY@{}}
+\toprule
+Feature & F-ratio & Interpretation \\
+\midrule
+\texttt{bwd\_pkts\_b\_avg} & 644687.3 & Flow-structure and traffic-composition separation \\
+\texttt{pkt\_len\_var} & 617539.2 & Packet-size variability differs across routers \\
+\texttt{fwd\_byts\_b\_avg} & 540440.2 & Forward byte-rate profile differs across routers \\
+\texttt{fwd\_pkts\_b\_avg} & 494239.7 & Forward packet-rate profile differs across routers \\
+\texttt{fwd\_blk\_rate\_avg} & 451936.3 & Burst/block-rate structure differs across routers \\
+\texttt{fwd\_pkt\_len\_mean} & 427311.3 & Forward packet-size profile differs across routers \\
+\texttt{fwd\_seg\_size\_avg} & 427311.3 & Forward segment-size profile differs across routers \\
+\texttt{fwd\_pkt\_len\_std} & 377781.3 & Forward packet-size dispersion differs across routers \\
+\texttt{bwd\_pkt\_len\_mean} & 355782.9 & Backward packet-size profile differs across routers \\
+\texttt{bwd\_seg\_size\_avg} & 355782.9 & Backward segment-size profile differs across routers \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.86\linewidth]{q1_1c_top10_feature_variance.png}
+\caption{Q1.1(c) top-10 features ranked by between-router to within-router variance ratio.}
+\label{fig:q1_variance}
+\end{figure}
+
+\subsection{Question 1.2: Router Similarity and Adjacency Estimation}
+For Q1.2(a), each router was represented by the mean of 79 numeric CICFlowMeter features after excluding \texttt{src\_ip}, \texttt{dst\_ip}, and \texttt{timestamp}. The per-router feature profiles were z-scored across routers, and cosine similarity was computed on the standardized profile vectors. Cosine similarity was chosen because it compares traffic-profile shape rather than raw volume, which matters because flow counts vary substantially across D1--D10. The resulting heatmap is shown in Figure~\ref{fig:q1_similarity}.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.72\linewidth]{q1_2a_router_similarity_heatmap.png}
+\caption{Q1.2(a) cosine-similarity matrix over standardized per-router mean feature profiles.}
+\label{fig:q1_similarity}
+\end{figure}
+
+For Q1.2(b), I compared a 2-nearest-neighbor graph and a maximum-spanning-tree graph. Table~\ref{tab:q1_graph_methods} summarizes the resulting graph structures, and Figure~\ref{fig:q1_adjacency} visualizes both. The kNN graph preserves local affinities but may add shortcuts that look less physically plausible. The maximum spanning tree is a better first-pass physical baseline because it guarantees a connected sparse backbone with exactly nine edges.
+
+\begin{table}[!t]
+\caption{Q1.2(b) graph-construction comparison.}
+\label{tab:q1_graph_methods}
+\centering
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Method & Nodes & Edges & Avg. degree & Density \\
+\midrule
+2-NN graph & 10 & 12 & 2.4 & 0.267 \\
+Maximum spanning tree & 10 & 9 & 1.8 & 0.200 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.92\linewidth]{q1_2b_adjacency_graphs.png}
+\caption{Q1.2(b) force-directed adjacency visualizations for the kNN and maximum-spanning-tree approaches.}
+\label{fig:q1_adjacency}
+\end{figure}
+
+For Q1.2(c), I computed overlap of source/destination IP sets and Jaccard similarity of \texttt{(src\_port, dst\_port, protocol)} tuples. The strongest overlap pairs were D10--D3, D6--D7, D8--D9, D6--D8, and D10--D7, as shown in Table~\ref{tab:q1_overlap}. Figures~\ref{fig:q1_ip_heatmap}--\ref{fig:q1_refined_mst} show the two overlap matrices and the refined graph separately so that the annotated values remain legible. The IP/tuple refinement retained seven feature-based MST edges, added D6--D7 and D8--D9, and removed D2--D8 and D5--D9. This means the feature-based and IP-based evidence reinforce many backbone edges, but IP overlap corrects pairs that appear globally similar without strong direct communication evidence.
+
+\begin{table}[!t]
+\caption{Q1.2(c) strongest IP and port/protocol tuple overlap pairs.}
+\label{tab:q1_overlap}
+\centering
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Router pair & Shared IPs & IP Jaccard & Tuple Jaccard \\
+\midrule
+D10--D3 & 27 & 0.692 & 0.328 \\
+D6--D7 & 24 & 0.686 & 0.110 \\
+D8--D9 & 25 & 0.676 & 0.504 \\
+D6--D8 & 22 & 0.667 & 0.375 \\
+D10--D7 & 26 & 0.605 & 0.331 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.74\linewidth]{q1_2c_ip_jaccard_heatmap.png}
+\caption{Q1.2(c) IP-set Jaccard overlap matrix across routers.}
+\label{fig:q1_ip_heatmap}
+\end{figure}
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.74\linewidth]{q1_2c_tuple_jaccard_heatmap.png}
+\caption{Q1.2(c) Jaccard similarity of \texttt{(src\_port, dst\_port, protocol)} tuples across routers.}
+\label{fig:q1_tuple_heatmap}
+\end{figure}
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.72\linewidth]{q1_2c_refined_mst.png}
+\caption{Q1.2(c) refined maximum-spanning-tree graph after combining feature similarity, IP overlap, and tuple overlap.}
+\label{fig:q1_refined_mst}
+\end{figure}
+
+\subsection{Question 1.3: Topology Reconstruction and Validation}
+The final reconstructed topology treats the ten collectors as a sparse projection of a larger backbone. I started with a maximum-spanning backbone and then added limited redundancy only when direct evidence was strong. Edge weights combine feature similarity, IP Jaccard, tuple Jaccard, dominant-port overlap, traffic-volume compatibility, duration compatibility, packet-balance compatibility, and a latency proxy. Table~\ref{tab:q1_edges} lists the selected edges, and Figure~\ref{fig:q1_topology} shows the reconstructed graph.
+
+\begin{table}[!t]
+\caption{Q1.3(a) reconstructed topology edges and selected edge weights.}
+\label{tab:q1_edges}
+\centering
+\scriptsize
+\begin{tabular}{@{}lllrrr@{}}
+\toprule
+Source & Target & Tier & Composite & Direct evidence & Latency proxy \\
+\midrule
+D7 & D8 & backbone & 0.626 & 0.356 & 0.522 \\
+D6 & D7 & backbone & 0.613 & 0.419 & 0.494 \\
+D8 & D9 & backbone & 0.601 & 0.552 & 0.426 \\
+D2 & D6 & backbone & 0.589 & 0.258 & 0.593 \\
+D5 & D10 & backbone & 0.582 & 0.290 & 0.578 \\
+D3 & D7 & backbone & 0.566 & 0.361 & 0.547 \\
+D3 & D10 & backbone & 0.563 & 0.461 & 0.493 \\
+D2 & D4 & backbone & 0.547 & 0.139 & 0.678 \\
+D1 & D9 & backbone & 0.537 & 0.202 & 0.647 \\
+D9 & D10 & shortcut & 0.463 & 0.309 & 0.622 \\
+D6 & D8 & redundancy & 0.569 & 0.502 & 0.468 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Each kept edge has either MST support, direct IP/tuple evidence, or a strong router-role compatibility signal. D7--D8 and D6--D7 combine high neighbor consistency with strong role evidence; D8--D9 and D6--D8 are strongly reinforced by IP and tuple overlap; D2--D6, D2--D4, and D5--D10 are primarily feature- and role-supported backbone links; D3--D7 and D3--D10 connect D3 to the central backbone with both feature and direct-overlap support; D1--D9 is D1's strongest sparse-backbone attachment; and D9--D10 is retained as a longer-path shortcut. Strong alternatives such as D7--D10, D5--D9, D2--D7, D8--D10, and D1--D10 were left out because the selected graph already connected those routers through better-supported paths or because direct overlap evidence was weaker.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.92\linewidth]{q1_3a_inferred_topology.png}
+\caption{Q1.3(a) reconstructed ten-router topology with weighted edge evidence.}
+\label{fig:q1_topology}
+\end{figure}
+
+The graph-theoretic properties are summarized in Table~\ref{tab:q1_graph_properties}. The topology has 10 nodes, 11 edges, density 0.244, diameter 6 hops, and average path length 2.511 hops. D9 has the highest betweenness centrality, followed by D6 and D8. Removing D9 fragments the graph into two connected components, so D9 behaves like the most critical bridge-like router in the reconstructed collector projection.
+
+\begin{table}[!t]
+\caption{Q1.3(b) graph-theoretic properties for the reconstructed topology.}
+\label{tab:q1_graph_properties}
+\centering
+\small
+\begin{tabularx}{0.92\linewidth}{@{}lY@{}}
+\toprule
+Property & Result \\
+\midrule
+Nodes, edges, density & 10 nodes, 11 edges, density 0.244 \\
+Degree distribution & degree 1: 3 routers; degree 2: 2 routers; degree 3: 5 routers \\
+Diameter and average path length & 6 hops; 2.511 hops average \\
+Weighted path metrics & weighted diameter 3.366; weighted average path length 1.375 \\
+Highest betweenness & D9 = 0.444; D6 = 0.389; D8 = 0.389 \\
+Removal impact & Removing D9 leaves the graph disconnected, with two components and largest component size 8 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+For Q1.3(c), I compared the reconstructed collector graph against public GEANT-2012 resources from Topology Zoo and TopoHub. The inferred graph correctly captured that GEANT behaves like one connected backbone with non-uniform transit importance. It diverged from reality in scale and exact geography: the inferred graph has only the ten monitored routers and 11 projected edges, while the public GEANT-2012 topology has 40 nodes and 61 links. The collector-only projection is also denser because unobserved intermediate routers are collapsed. Traceroute paths, RTT/geographic metadata, interface counters, or control-plane state would improve direct-adjacency inference.
+
+\begin{table}[!t]
+\caption{Q1.3(c) comparison with the public GEANT-2012 topology.}
+\label{tab:q1_geant}
+\centering
+\small
+\begin{tabularx}{0.92\linewidth}{@{}lccY@{}}
+\toprule
+Metric & Inferred & GEANT-2012 & Interpretation \\
+\midrule
+Node count & 10 & 40 & The inferred graph covers only monitored collectors \\
+Edge count & 11 & 61 & It is a sparse collector projection, not the full physical map \\
+Density & 0.244 & 0.078 & Hidden intermediate routers are collapsed in the projection \\
+Average degree & 2.2 & 3.05 & Broadly comparable, but semantics differ \\
+Connected & Yes & Yes & Both views show a connected backbone \\
+Highest centrality & D9 & central European hubs & Both suggest non-uniform core transit importance \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Task 2: Attack Discovery and Classification}
+
+\subsection{Question 2.1: Preprocessing, Dimensionality Reduction, and Features}
+The preprocessing pipeline normalized router IDs, removed duplicates within each normalized router, converted missing and infinite values to missing values, imputed feature means, removed unusable or zero-variance features, and standardized the remaining numeric features. StandardScaler was used because PCA benefits from centered unit-variance inputs, while extreme network rates and counts can remain useful attack signals rather than pure outliers.
+
+\begin{table}[!t]
+\caption{Q2.1(a) preprocessing summary.}
+\label{tab:q2_preprocess}
+\centering
+\small
+\begin{tabularx}{0.92\linewidth}{@{}lY@{}}
+\toprule
+Item & Result \\
+\midrule
+Rows before deduplication & 5,416,155 \\
+Duplicate rows removed & 38,899 \\
+Rows after deduplication & 5,377,256 \\
+Features retained & 67 numeric standardized features \\
+Features removed & 12 zero-variance or non-finite features: \texttt{ack\_flag\_cnt}, \texttt{bwd\_psh\_flags}, \texttt{bwd\_urg\_flags}, \texttt{cwe\_flag\_count}, \texttt{ece\_flag\_cnt}, \texttt{fwd\_psh\_flags}, \texttt{fwd\_urg\_flags}, \texttt{protocol}, \texttt{psh\_flag\_cnt}, \texttt{rst\_flag\_cnt}, \texttt{syn\_flag\_cnt}, \texttt{urg\_flag\_cnt} \\
+Scaling & Z-score standardization with mean imputation for remaining numeric features \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+For Q2.1(b), streaming IncrementalPCA was fit on all 5,377,256 preprocessed rows. Eighteen principal components retained at least 95\% of the variance, as shown in Figure~\ref{fig:q2_pca}. A UMAP embedding was then fit on a 100,000-row stratified sample preserving router distribution, using \texttt{n\_neighbors=30} and \texttt{min\_dist=0.1}. The same-router 15-nearest-neighbor purity was 0.6417 compared with a largest-router baseline share of 0.2541. Figure~\ref{fig:q2_umap} shows weak-to-moderate router-driven grouping, but no clean partition by router alone.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.72\linewidth]{q2_1b_pca_cumulative_variance.png}
+\caption{Q2.1(b) PCA cumulative explained variance. Eighteen components retain at least 95\% of variance.}
+\label{fig:q2_pca}
+\end{figure}
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.78\linewidth]{q2_1b_umap_router_embedding.png}
+\caption{Q2.1(b) UMAP embedding colored by router ID for the stratified 100,000-row sample.}
+\label{fig:q2_umap}
+\end{figure}
+
+For Q2.1(c), I engineered four attack-oriented features: directional byte imbalance, bytes per packet, burst/idle log ratio, and packet-size asymmetry. Table~\ref{tab:q2_engineered} gives the networking intuition and computation for each. Their distributions across the final HDBSCAN clusters are shown in Figure~\ref{fig:q2_engineered}. The colors in that figure simply distinguish the HDBSCAN cluster groups shown on the x-axis; they do not encode an additional variable. Cluster -1 is HDBSCAN noise, while clusters 0--4 use the semantic labels assigned in Q2.2(c).
+
+\begin{table}[!t]
+\caption{Q2.1(c) engineered features and network intuition.}
+\label{tab:q2_engineered}
+\centering
+\small
+\begin{tabularx}{\linewidth}{@{}lYY@{}}
+\toprule
+Feature & Computation & Intuition \\
+\midrule
+\texttt{directional\_byte\_imbalance} & \texttt{(totlen\_fwd\_pkts - totlen\_bwd\_pkts) / (totlen\_fwd\_pkts + totlen\_bwd\_pkts + 1)} & Flooding and scanning can be highly one-sided \\
+\texttt{bytes\_per\_packet} & \texttt{(totlen\_fwd\_pkts + totlen\_bwd\_pkts) / (tot\_fwd\_pkts + tot\_bwd\_pkts + 1)} & Attacks often have distinctive payload-size profiles \\
+\texttt{burst\_idle\_log\_ratio} & \texttt{log1p(max(active\_mean, 0)) - log1p(max(idle\_mean, 0))} & Scripted attacks often create concentrated bursts \\
+\texttt{packet\_size\_asymmetry} & \texttt{abs(fwd\_pkt\_len\_mean - bwd\_pkt\_len\_mean) / (fwd\_pkt\_len\_mean + bwd\_pkt\_len\_mean + 1)} & Request-heavy or response-heavy attacks create directional size imbalance \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.92\linewidth]{q2_2c_hdbscan_engineered_feature_distributions.png}
+\caption{Q2.1(c) engineered-feature distributions across the final discovered HDBSCAN clusters. Each boxplot shows the median, interquartile range, whiskers, and outliers for one engineered feature within one cluster; the x-axis labels give both cluster IDs and the semantic mappings used later in Q2.2(c).}
+\label{fig:q2_engineered}
+\end{figure}
+
+\subsection{Question 2.2: Unsupervised Attack Discovery}
+The clustering experiments reused the stratified 100,000-row UMAP sample and fit final clustering models on a stratified 5,000-row subset, with hyperparameter selection on a 2,000-row subset. This sampling choice follows the assignment's allowance for stratified random samples on computationally expensive clustering. The three required clustering families were MiniBatchKMeans, HDBSCAN, and GaussianMixture. Table~\ref{tab:q2_cluster_config} lists the selected configurations and cluster counts, and Figure~\ref{fig:q2_clusters} shows the embeddings.
+
+\begin{table}[!t]
+\caption{Q2.2(a) selected clustering algorithms and hyperparameters.}
+\label{tab:q2_cluster_config}
+\centering
+\small
+\begin{tabularx}{\linewidth}{@{}lclY@{}}
+\toprule
+Algorithm & Family & Clusters & Selected configuration \\
+\midrule
+MiniBatchKMeans & Partitional & 8 & \texttt{n\_clusters=8}, \texttt{batch\_size=4096}, \texttt{max\_iter=200}, \texttt{n\_init=10} \\
+HDBSCAN & Density-based & 5 plus noise & \texttt{min\_cluster\_size=250}, \texttt{min\_samples=10}, \texttt{cluster\_selection\_method=eom}; 12.72\% noise \\
+GaussianMixture & Model-based & 14 & \texttt{n\_components=14}, diagonal covariance, \texttt{reg\_covar=0.0001}, \texttt{max\_iter=200}, \texttt{init\_params=kmeans} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.96\linewidth]{q2_2a_cluster_embedding_comparison.png}
+\caption{Q2.2(a) MiniBatchKMeans, HDBSCAN, and GaussianMixture cluster assignments projected onto the Q2.1(b) UMAP space.}
+\label{fig:q2_clusters}
+\end{figure}
+
+Internal validation used silhouette score, Davies-Bouldin Index, and Calinski-Harabasz Index. For HDBSCAN, noise points were excluded from metric computation because those metrics assume regular cluster labels. Table~\ref{tab:q2_validation} shows that HDBSCAN achieved the best overall rank, although GaussianMixture came closest to the nominal 11-class count.
+
+\begin{table}[!t]
+\caption{Q2.2(b) internal validation metrics for clustering. Higher silhouette and Calinski-Harabasz are better; lower Davies-Bouldin is better.}
+\label{tab:q2_validation}
+\centering
+\small
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+Algorithm & Clusters & Noise & Noise \% & Silhouette & DBI & CHI \\
+\midrule
+HDBSCAN & 5 & 636 & 12.72 & 0.4719 & 0.9041 & 3387.73 \\
+GaussianMixture & 14 & 0 & 0.00 & 0.4311 & 1.3676 & 1364.52 \\
+MiniBatchKMeans & 8 & 0 & 0.00 & 0.3715 & 1.3678 & 834.01 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+For Q2.2(c), HDBSCAN was selected for semantic mapping because it had the strongest internal validation profile and handles noise and imbalanced density better than methods that force every sample into a cluster. Table~\ref{tab:q2_mapping} gives the confusion-style mapping to the known classes. Cluster 0 maps to DDoS TCP because flows are tiny and one-directional; Cluster 1 maps to DDoS Bot because it contains large asymmetric flows concentrated on service ports; Cluster 2 maps to Normal because it contains short balanced exchanges with more port diversity; Cluster 3 maps to DoS Hulk because it has sustained request-burst behavior; Cluster 4 maps to DoS SlowHTTP because it contains long-lived low-rate flows. Noise remains Unknown rather than being over-labeled.
+
+\begin{table}[!t]
+\caption{Q2.2(c) HDBSCAN cluster-to-class mapping.}
+\label{tab:q2_mapping}
+\centering
+\small
+\begin{tabular}{@{}clrrl@{}}
+\toprule
+Cluster & Predicted label & Rows & Share & Confidence \\
+\midrule
+-1 & Unknown & 636 & 12.72\% & Low \\
+0 & DDoS TCP & 429 & 8.58\% & High \\
+1 & DDoS Bot & 1406 & 28.12\% & Medium \\
+2 & Normal & 1101 & 22.02\% & Medium \\
+3 & DoS Hulk & 1040 & 20.80\% & Medium \\
+4 & DoS SlowHTTP & 388 & 7.76\% & High \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Question 2.3: Discovery Analysis}
+Discoverability was ranked using the selected HDBSCAN model, cluster mapping confidence, class distinctiveness, and assignment-provided imbalance facts. The easiest classes were those with extreme flow signatures, such as DDoS TCP and DoS SlowHTTP. The hardest were rare application-layer or stealthy behaviors such as Web Command Injection, Web SQL Injection, and Infiltration MITM, which are unlikely to form dense clusters from flow statistics alone.
+
+\begin{table}[!t]
+\caption{Q2.3(a) inferred class discoverability ranking.}
+\label{tab:q2_discoverability}
+\centering
+\small
+\begin{tabularx}{0.95\linewidth}{@{}lrlY@{}}
+\toprule
+Class & Rank & Score & Reason \\
+\midrule
+DDoS TCP & 1 & 9.672 & Minimal packets and one-way asymmetry \\
+DoS SlowHTTP & 2 & 9.155 & Long-lived, very low-rate connections \\
+DDoS Bot & 3 & 7.562 & Large asymmetric bot-driven floods \\
+DoS Hulk & 4 & 7.416 & Burst-heavy HTTP flooding \\
+Normal & 5 & 5.640 & Broad but still identifiable balanced traffic \\
+DDoS Dyn & 6 & 2.450 & Overlaps with broader DDoS intensity signals \\
+DDoS Stomp & 7 & 2.450 & Similar flooding profile to other DDoS variants \\
+Web XSS & 8 & 1.050 & Application-layer abuse resembles normal web sessions \\
+Infiltration MITM & 9 & -0.050 & Stealthy behavior hidden in plausible exchanges \\
+Web SQL Injection & 10 & -0.050 & Rare and close to ordinary HTTP flow summaries \\
+Web Command Injection & 11 & -0.550 & Extremely rare; assignment states only 330 training instances \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Severe imbalance shaped the cluster geometry. HDBSCAN found only five non-noise dense clusters and assigned 636 of 5,000 fitted rows to noise. GaussianMixture created 14 components including six microclusters with at most 100 rows. MiniBatchKMeans forced all rows into eight partitions with the largest cluster containing 29.86\% of rows. These patterns indicate that rare attack types are treated as noise by HDBSCAN, fragmented by GaussianMixture, or absorbed into larger clusters by MiniBatchKMeans. Payload features, HTTP request metadata, TLS fingerprints, and host context would be especially helpful for the rare web and MITM classes.
+
+\section{Task 3: Supervised Attack Classification}
+
+\subsection{Question 3.1: Baseline Models}
+For Task 3, the training corpus contained 746,617 labeled rows from \path{data/test/}, and the evaluation corpus contained 5,416,155 labeled rows from \path{data/raw_labeled/}. The baseline pipeline used 79 numeric features and no categorical features. Table~\ref{tab:q3_baselines} reports the required overall metrics for RandomForest, HistGradientBoosting, and MLP. RandomForest was the strongest baseline with macro F1 0.8449 and weighted F1 0.9364.
+
+\begin{table}[!t]
+\caption{Q3.1(a) baseline model comparison.}
+\label{tab:q3_baselines}
+\centering
+\scriptsize
+\begin{tabularx}{\linewidth}{@{}lrrrrrrY@{}}
+\toprule
+Model & Time (s) & Acc. & Prec. macro & Rec. macro & F1 macro & F1 weighted & Key hyperparameters \\
+\midrule
+RandomForest & 60.809 & 0.9313 & 0.8510 & 0.9008 & 0.8449 & 0.9364 & 200 trees, unrestricted depth, min leaf 1, \texttt{n\_jobs=-1}, seed 5840 \\
+HistGradientBoosting & 41.540 & 0.5194 & 0.4868 & 0.4790 & 0.4203 & 0.6016 & learning rate 0.05, 300 iterations, 63 leaf nodes, min leaf 20 \\
+MLP & 156.728 & 0.7566 & 0.5731 & 0.7131 & 0.5568 & 0.7856 & hidden layers 256 and 128, ReLU, Adam, batch size 4096, early stopping \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begingroup
+\scriptsize
+\begin{longtable}{@{}llrrrr@{}}
+\caption{Q3.1(a) per-class precision, recall, and F1 for the three baseline models.}
+\label{tab:q3_baseline_perclass}\\
+\toprule
+Model & Class & Precision & Recall & F1 & Support \\
+\midrule
+\endfirsthead
+\toprule
+Model & Class & Precision & Recall & F1 & Support \\
+\midrule
+\endhead
+RandomForest & DDoS-bot & 0.426 & 0.995 & 0.597 & 87808 \\
+RandomForest & DDoS-dyn & 0.717 & 0.911 & 0.802 & 322920 \\
+RandomForest & DDoS-stomp & 1.000 & 0.692 & 0.818 & 389540 \\
+RandomForest & DDoS-tcp & 0.952 & 0.883 & 0.916 & 930798 \\
+RandomForest & DoS-hulk & 0.972 & 0.998 & 0.985 & 1644381 \\
+RandomForest & DoS-slowhttp & 0.988 & 0.765 & 0.862 & 86226 \\
+RandomForest & Infiltration-mitm & 0.367 & 0.999 & 0.537 & 28113 \\
+RandomForest & Normal & 1.000 & 0.953 & 0.976 & 1922529 \\
+RandomForest & Web-command-injection & 0.940 & 1.000 & 0.969 & 330 \\
+RandomForest & Web-sql-injection & 1.000 & 1.000 & 1.000 & 441 \\
+RandomForest & Web-xss & 1.000 & 0.712 & 0.832 & 3069 \\
+HistGradientBoosting & DDoS-bot & 0.485 & 0.986 & 0.650 & 87808 \\
+HistGradientBoosting & DDoS-dyn & 0.011 & 0.039 & 0.017 & 322920 \\
+HistGradientBoosting & DDoS-stomp & 0.996 & 0.699 & 0.822 & 389540 \\
+HistGradientBoosting & DDoS-tcp & 0.999 & 0.685 & 0.812 & 930798 \\
+HistGradientBoosting & DoS-hulk & 0.642 & 0.268 & 0.378 & 1644381 \\
+HistGradientBoosting & DoS-slowhttp & 0.362 & 0.047 & 0.084 & 86226 \\
+HistGradientBoosting & Infiltration-mitm & 0.365 & 0.994 & 0.534 & 28113 \\
+HistGradientBoosting & Normal & 0.860 & 0.692 & 0.767 & 1922529 \\
+HistGradientBoosting & Web-command-injection & 0.001 & 0.130 & 0.002 & 330 \\
+HistGradientBoosting & Web-sql-injection & 0.000 & 0.231 & 0.000 & 441 \\
+HistGradientBoosting & Web-xss & 0.635 & 0.497 & 0.558 & 3069 \\
+MLP & DDoS-bot & 0.316 & 0.900 & 0.468 & 87808 \\
+MLP & DDoS-dyn & 0.149 & 0.521 & 0.232 & 322920 \\
+MLP & DDoS-stomp & 0.992 & 0.951 & 0.971 & 389540 \\
+MLP & DDoS-tcp & 0.998 & 0.999 & 0.998 & 930798 \\
+MLP & DoS-hulk & 0.893 & 0.377 & 0.530 & 1644381 \\
+MLP & DoS-slowhttp & 0.691 & 0.694 & 0.692 & 86226 \\
+MLP & Infiltration-mitm & 0.452 & 1.000 & 0.622 & 28113 \\
+MLP & Normal & 0.999 & 0.957 & 0.978 & 1922529 \\
+MLP & Web-command-injection & 0.000 & 0.000 & 0.000 & 330 \\
+MLP & Web-sql-injection & 0.009 & 0.948 & 0.018 & 441 \\
+MLP & Web-xss & 0.804 & 0.497 & 0.615 & 3069 \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+For Q3.1(b), RandomForest feature importances show that packet-shape and timing features dominate. The strongest features include \texttt{fwd\_pkt\_len\_std}, \texttt{pkt\_len\_std}, \texttt{pkt\_len\_var}, \texttt{bwd\_pkt\_len\_max}, \texttt{bwd\_pkt\_len\_mean}, and \texttt{flow\_duration}. This aligns with the Task 2 engineered features around packet-size asymmetry, bytes per packet, and burst/idle behavior. Figure~\ref{fig:q3_importance} shows the top-20 importances.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.86\linewidth]{q3_1b_top20_feature_importance.png}
+\caption{Q3.1(b) top-20 RandomForest feature importances.}
+\label{fig:q3_importance}
+\end{figure}
+
+For Q3.1(c), the best baseline RandomForest confusion matrix is shown in Figure~\ref{fig:q3_confusion}. The most common confusions are DDoS Stomp predicted as DDoS Bot, DDoS TCP predicted as DDoS Dyn, Normal predicted as Infiltration MITM, Normal predicted as DDoS TCP, and DDoS Dyn predicted as DoS Hulk. These confusions are plausible because related DoS/DDoS families share flood-like timing and packet-shape features, while Infiltration MITM can preserve benign-looking client-server summaries.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.78\linewidth]{q3_1c_confusion_matrix.png}
+\caption{Q3.1(c) confusion matrix for the best baseline RandomForest model.}
+\label{fig:q3_confusion}
+\end{figure}
+
+\subsection{Question 3.2: Handling Class Imbalance}
+I compared four RandomForest strategies: no balancing, selective SMOTE oversampling, class-weighted loss, and a hybrid SMOTE plus random undersampling strategy. Selective SMOTE oversampled classes below 25,000 training rows; the hybrid strategy capped the largest classes at 250,000 rows. Table~\ref{tab:q3_imbalance} shows that no balancing had the best macro F1, while oversampling modestly helped Infiltration MITM but hurt the two rare web classes relative to the already strong baseline.
+
+\begin{table}[!t]
+\caption{Q3.2(a) imbalance-handling strategy comparison.}
+\label{tab:q3_imbalance}
+\centering
+\small
+\begin{tabular}{@{}lrrrrrrr@{}}
+\toprule
+Strategy & Time & Acc. & Prec. macro & Rec. macro & F1 macro & F1 weighted & Train rows \\
+\midrule
+No Balancing & 49.011 & 0.9313 & 0.8510 & 0.9008 & 0.8449 & 0.9364 & 746617 \\
+SMOTE Oversampling & 61.272 & 0.9228 & 0.7924 & 0.8599 & 0.7839 & 0.9283 & 867548 \\
+Class Weighting & 48.717 & 0.8862 & 0.6297 & 0.8629 & 0.6322 & 0.9135 & 746617 \\
+SMOTE + Undersampling & 59.051 & 0.9206 & 0.7046 & 0.8563 & 0.6951 & 0.9268 & 815467 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+For Q3.2(b), Figure~\ref{fig:q3_rare} shows rare-class F1 for Web Command Injection, Web SQL Injection, and Infiltration MITM. No balancing had the highest mean rare-class F1 at 0.8353 because the baseline already performed nearly perfectly on the two rare web classes. SMOTE improved Infiltration MITM from 0.5368 to 0.5950 but reduced Web Command Injection to 0.7341 and Web SQL Injection to 0.8786. Class weighting produced the largest precision collapse on rare web classes and also reduced majority-class F1.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.86\linewidth]{q3_2b_rare_class_f1.png}
+\caption{Q3.2(b) rare-class F1 scores under the imbalance-handling strategies.}
+\label{fig:q3_rare}
+\end{figure}
+
+\begin{table}[!t]
+\caption{Q3.2(b) rare-class and majority-class tradeoff summary.}
+\label{tab:q3_rare_summary}
+\centering
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Strategy & Mean rare F1 & Weighted majority F1 & Mean majority delta \\
+\midrule
+No Balancing & 0.8353 & 0.9385 & 0.0000 \\
+SMOTE Oversampling & 0.7359 & 0.9301 & -0.0466 \\
+Class Weighting & 0.2035 & 0.9156 & -0.0555 \\
+SMOTE + Undersampling & 0.4192 & 0.9289 & -0.0499 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Question 3.3: Advanced Model}
+The advanced model family used a tuned RandomForest backbone with optional Task 2 engineered features and per-class score calibration. The hyperparameter search considered original versus engineered feature sets, \texttt{max\_depth} in \{None, 24\}, \texttt{min\_samples\_leaf} in \{1, 2\}, and \texttt{class\_weight} in \{None, \texttt{balanced\_subsample}\}. The final selected configuration used original features only, 200 estimators, unrestricted depth, \texttt{min\_samples\_leaf=2}, no class weighting, and score multipliers for DDoS Bot and DDoS Dyn. Figure~\ref{fig:q3_arch} summarizes the architecture.
+
+\begin{figure}[!t]
+\centering
+\fbox{\begin{minipage}{0.9\linewidth}
+\centering
+Input flow $\rightarrow$ 79 original CICFlowMeter features $\rightarrow$ tuned RandomForest backbone $\rightarrow$ per-class score calibration $\rightarrow$ selected advanced prediction
+\end{minipage}}
+\caption{Q3.3(a) advanced-model architecture. Candidate variants optionally added engineered features before the tuned RandomForest and calibration stage; the selected variant used original features only.}
+\label{fig:q3_arch}
+\end{figure}
+
+The final advanced model improved macro F1 from 0.8449 to 0.8930 relative to the best Q3.2 result. Table~\ref{tab:q3_advanced} reports the required test-set metrics, and Table~\ref{tab:q3_advanced_perclass} gives per-class performance. The largest class-level gains relative to the baseline were on Web XSS, DDoS Bot, DDoS Stomp, and Infiltration MITM.
+
+\begin{table}[!t]
+\caption{Q3.3(a) final advanced-model metrics and comparison with best Q3.2 result.}
+\label{tab:q3_advanced}
+\centering
+\small
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+Model & Accuracy & Precision macro & Recall macro & F1 macro & F1 weighted \\
+\midrule
+Best Q3.2: No Balancing & 0.9313 & 0.8510 & 0.9008 & 0.8449 & 0.9364 \\
+Full Advanced & 0.9540 & 0.8801 & 0.9432 & 0.8930 & 0.9571 \\
+Delta & 0.0227 & 0.0291 & 0.0425 & 0.0481 & 0.0208 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[!t]
+\caption{Q3.3(a) per-class metrics for the final advanced model.}
+\label{tab:q3_advanced_perclass}
+\centering
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Class & Precision & Recall & F1 & Support \\
+\midrule
+DDoS-bot & 0.549 & 0.977 & 0.703 & 87808 \\
+DDoS-dyn & 0.756 & 0.915 & 0.828 & 322920 \\
+DDoS-stomp & 0.999 & 0.821 & 0.901 & 389540 \\
+DDoS-tcp & 0.999 & 0.901 & 0.948 & 930798 \\
+DoS-hulk & 0.974 & 0.998 & 0.986 & 1644381 \\
+DoS-slowhttp & 0.988 & 0.802 & 0.886 & 86226 \\
+Infiltration-mitm & 0.424 & 0.999 & 0.595 & 28113 \\
+Normal & 1.000 & 0.980 & 0.990 & 1922529 \\
+Web-command-injection & 0.991 & 0.991 & 0.991 & 330 \\
+Web-sql-injection & 1.000 & 0.993 & 0.997 & 441 \\
+Web-xss & 1.000 & 0.997 & 0.999 & 3069 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+For Q3.3(b), the ablation study in Table~\ref{tab:q3_ablation} shows that score calibration was important, engineered features did not help on the full evaluation corpus, and class weighting hurt substantially. The largest macro-F1 drop came from enabling class weighting, which reduced macro F1 by 0.2522 relative to the selected model.
+
+\begin{table}[!t]
+\caption{Q3.3(b) ablation study.}
+\label{tab:q3_ablation}
+\centering
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Variant & Accuracy & Recall macro & F1 macro & Delta vs selected \\
+\midrule
+Full Advanced & 0.9540 & 0.9432 & 0.8930 & 0.0000 \\
+Add Engineered Features & 0.9536 & 0.9016 & 0.8662 & -0.0268 \\
+No Score Calibration & 0.9310 & 0.9177 & 0.8534 & -0.0396 \\
+Enable Class Weighting & 0.9095 & 0.8705 & 0.6408 & -0.2522 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Question 3.4: Router-Level Analysis}
+For Q3.4(a), the selected advanced model was evaluated by router. Figure~\ref{fig:q3_router_heatmap} shows router-by-class F1, and Table~\ref{tab:q3_router_summary} summarizes router-level performance. D6 was the easiest router with macro F1 over present classes of 0.9995, largely because its test mix is concentrated in DoS Hulk and Normal. D10 was hardest with macro F1 over present classes of 0.7447, driven by weak DoS SlowHTTP and Infiltration MITM performance under a DDoS TCP-heavy mix.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.92\linewidth]{q3_4a_router_class_f1_heatmap.png}
+\caption{Q3.4(a) per-router, per-class F1 heatmap for the selected advanced model.}
+\label{fig:q3_router_heatmap}
+\end{figure}
+
+\begin{table}[!t]
+\caption{Q3.4(a) router-level performance summary. Macro F1 is computed over classes present at each router.}
+\label{tab:q3_router_summary}
+\centering
+\scriptsize
+\begin{tabular}{@{}lrrrrrlrl@{}}
+\toprule
+Router & Rows & Classes & Accuracy & Weighted F1 & Macro F1 & Dominant class & Dominant share & Worst class \\
+\midrule
+D1 & 205215 & 5 & 0.990 & 0.995 & 0.997 & Normal & 0.507 & DDoS-bot \\
+D2 & 495778 & 5 & 0.987 & 0.988 & 0.883 & DoS-hulk & 0.793 & DoS-slowhttp \\
+D3 & 221390 & 4 & 1.000 & 1.000 & 0.999 & Normal & 0.882 & Web-sql-injection \\
+D4 & 457963 & 6 & 0.998 & 0.998 & 0.997 & DoS-hulk & 0.864 & DoS-slowhttp \\
+D5 & 521364 & 3 & 0.866 & 0.926 & 0.967 & DDoS-stomp & 0.747 & DDoS-stomp \\
+D6 & 611942 & 2 & 0.999 & 0.999 & 1.000 & DoS-hulk & 0.661 & DoS-hulk \\
+D7 & 566758 & 3 & 0.985 & 0.989 & 0.841 & Normal & 0.594 & Infiltration-mitm \\
+D8 & 470708 & 3 & 0.936 & 0.959 & 0.821 & Normal & 0.505 & DoS-slowhttp \\
+D9 & 474181 & 4 & 0.942 & 0.970 & 0.986 & DDoS-dyn & 0.681 & DDoS-dyn \\
+D10 & 1390856 & 4 & 0.926 & 0.959 & 0.745 & DDoS-tcp & 0.669 & DoS-slowhttp \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+For Q3.4(b), I trained on routers D1--D7 and tested on unseen routers D8--D10. Table~\ref{tab:q3_cross_router} and Figure~\ref{fig:q3_cross_router} show a severe drop: macro F1 fell from 0.8930 in the standard evaluation to 0.4870 cross-router. The main reason is class coverage rather than general failure on shared traffic: DDoS TCP and DDoS Dyn were absent from the training routers but made up 53.7\% of the cross-router test rows. The model generalized well to shared classes on D8, but failed on unseen router-specific attack classes on D9 and D10. For distributed IDS deployment, this implies that training needs multi-router coverage, regular refreshes as routers come online, and monitoring for router-specific domain shift.
+
+\begin{table}[!t]
+\caption{Q3.4(b) standard versus cross-router generalization metrics.}
+\label{tab:q3_cross_router}
+\centering
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Metric & Standard & Cross-router & Delta \\
+\midrule
+Accuracy & 0.9540 & 0.4623 & -0.4917 \\
+Precision macro & 0.8801 & 0.4859 & -0.3942 \\
+Recall macro & 0.9432 & 0.4894 & -0.4538 \\
+F1 macro & 0.8930 & 0.4870 & -0.4060 \\
+F1 weighted & 0.9571 & 0.4570 & -0.5002 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.84\linewidth]{q3_4b_overall_metric_comparison.png}
+\caption{Q3.4(b) standard evaluation versus cross-router generalization on D8--D10.}
+\label{fig:q3_cross_router}
+\end{figure}
+
+\section{Conclusion}
+The topology analysis reconstructed a connected, sparse ten-router collector projection with D9, D6, and D8 acting as the most central routers. The reconstruction matched broad GEANT-2012 structure by recovering a connected backbone with non-uniform transit importance, but it could not recover hidden intermediate nodes or exact geography from flow data alone.
+
+In the unlabeled discovery task, HDBSCAN was the strongest clustering model by internal validation, but it discovered only five dense non-noise clusters. The results show that flow-only unsupervised discovery is biased toward high-volume, low-entropy attack families such as DDoS TCP and DoS SlowHTTP, while rare web and MITM attacks need payload, endpoint, or session-context features.
+
+In the supervised task, RandomForest was the strongest baseline and the final advanced calibrated RandomForest improved macro F1 to 0.8930. The router-level study showed high performance on routers whose classes were represented in training, but cross-router testing exposed poor generalization to attack classes absent from the training routers. A practical distributed IDS should therefore combine representative multi-router training, class-coverage checks, and continuous domain-shift monitoring.
+
+\begin{thebibliography}{1}
+\bibitem{flnet}
+FML-Network reference repository, \url{https://github.com/nsol-nmsu/FML-Network}.
+\bibitem{core}
+Common Open Research Emulator, \url{https://www.nrl.navy.mil/Our-Work/Areas-of-Research/Information-Technology/NCS/CORE/}.
+\bibitem{cicflowmeter}
+CICFlowMeter project, \url{https://github.com/ahlashkari/CICFlowMeter}.
+\bibitem{topologyzoo}
+Internet Topology Zoo dataset, \url{https://topology-zoo.org/dataset.html}.
+\bibitem{topohub}
+TopoHub topology catalog, \url{https://www.topohub.org/}.
+\end{thebibliography}
+
+\end{document}

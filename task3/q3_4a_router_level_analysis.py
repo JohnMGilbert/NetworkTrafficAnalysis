@@ -417,7 +417,7 @@ def choose_best_available_model(args: argparse.Namespace) -> SelectedModel:
             candidates.append(
                 SelectedModel(
                     artifact_kind="advanced_hybrid",
-                    display_name="Advanced Hybrid",
+                    display_name="Advanced Model",
                     source_tag="Question 3.3",
                     model_path=advanced_model_path,
                     f1_macro=float(row["f1_macro"]),
@@ -690,7 +690,18 @@ def build_hardest_pairs_table(per_class_metrics: pd.DataFrame, limit: int = 10) 
 def create_router_class_heatmap(matrix: pd.DataFrame, figure_path: Path) -> None:
     fig, ax = plt.subplots(figsize=(15, 7))
     display_values = matrix.to_numpy(dtype=float)
-    image = ax.imshow(display_values, aspect="auto", vmin=0.0, vmax=1.0, cmap="YlGnBu")
+    heatmap_cmap = matplotlib.colors.LinearSegmentedColormap.from_list(
+        "router_f1_yellow_green",
+        ["#fff7bc", "#c7e9b4", "#31a354"],
+    )
+    heatmap_cmap.set_bad(color="#f2f2f2")
+    image = ax.imshow(
+        np.ma.masked_invalid(display_values),
+        aspect="auto",
+        vmin=0.0,
+        vmax=1.0,
+        cmap=heatmap_cmap,
+    )
 
     ax.set_xticks(np.arange(matrix.shape[1]))
     ax.set_xticklabels(matrix.columns.tolist(), rotation=45, ha="right", fontsize=9)
@@ -704,7 +715,7 @@ def create_router_class_heatmap(matrix: pd.DataFrame, figure_path: Path) -> None
         for column_index in range(matrix.shape[1]):
             value = display_values[row_index, column_index]
             label = "NA" if np.isnan(value) else f"{value:.2f}"
-            text_color = "white" if not np.isnan(value) and value < 0.45 else "#1f1f1f"
+            text_color = "white" if not np.isnan(value) and value >= 0.82 else "#1f1f1f"
             ax.text(
                 column_index,
                 row_index,

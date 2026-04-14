@@ -6,6 +6,7 @@ import argparse
 import json
 import logging
 import math
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +29,7 @@ from src.common.paths import ensure_directory
 LOGGER = logging.getLogger("task2.q2_1a")
 METADATA_COLUMNS = ("router_id", "src_ip", "dst_ip", "timestamp")
 VARIANCE_EPSILON = 1e-12
+ROUTER_SUFFIX_PATTERN = re.compile(r"(?:^|[-_])D?(\d+)$", flags=re.IGNORECASE)
 
 
 @dataclass
@@ -132,6 +134,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def infer_router_id(path: Path) -> str:
+    match = ROUTER_SUFFIX_PATTERN.search(path.stem)
+    if match:
+        return f"D{int(match.group(1))}"
     return path.stem
 
 
@@ -359,7 +364,8 @@ def write_markdown_report(
         "# Task 2.1(a) Preprocessing Summary",
         "",
         "## Cleaning decisions",
-        "- Duplicates were defined as rows that match on every original column within the same router file.",
+        "- Router file shards were normalized to assignment router IDs such as `D1` through `D10` based on the trailing filename suffix.",
+        "- Duplicates were defined as rows that match on every original column within the same normalized router.",
         "- Missing values and infinite values were converted to NaN, then imputed with each feature mean before scaling.",
         "- Features with no usable finite values or zero variance were removed before standardization.",
         "- Remaining numeric flow features were z-score standardized.",

@@ -293,12 +293,13 @@ def build_base_search_space() -> list[BaseConfig]:
             n_estimators=n_estimators,
             max_depth=max_depth,
             min_samples_leaf=min_samples_leaf,
-            class_weight="balanced",
+            class_weight=class_weight,
         )
-        for n_estimators, max_depth, min_samples_leaf in product(
-            (200, 300),
-            (None, 28),
+        for n_estimators, max_depth, min_samples_leaf, class_weight in product(
+            (200,),
+            (None, 24),
             (1, 2),
+            (None, "balanced_subsample"),
         )
     ]
 
@@ -365,10 +366,96 @@ def fit_base_model(
     }, training_time
 
 
-def predict_base_model(model: dict[str, object], frame: pd.DataFrame) -> np.ndarray:
+def predict_base_probabilities(
+    model: dict[str, object],
+    frame: pd.DataFrame,
+) -> tuple[np.ndarray, np.ndarray]:
     feature_columns = list(model["feature_columns"])
-    transformed = model["imputer"].transform(frame[feature_columns])
-    return model["classifier"].predict(transformed)
+    transformed = model["imputer"].transform(frame[feature_columns]).astype(np.float32, copy=False)
+    classifier = model["classifier"]
+    probabilities = classifier.predict_proba(transformed)
+    class_names = np.asarray(classifier.classes_, dtype=object)
+    return probabilities, class_names
+
+
+def apply_class_score_weights(
+    probabilities: np.ndarray,
+    class_names: np.ndarray,
+    score_weights: dict[str, float] | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    if score_weights:
+        weight_vector = np.array(
+            [float(score_weights.get(str(class_name), 1.0)) for class_name in class_names],
+            dtype=np.float32,
+        )
+        adjusted_probabilities = probabilities * weight_vector.reshape(1, -1)
+    else:
+        adjusted_probabilities = probabilities
+
+    predictions = class_names[np.argmax(adjusted_probabilities, axis=1)]
+    return np.asarray(predictions, dtype=object), adjusted_probabilities
+
+
+def predict_base_model(model: dict[str, object], frame: pd.DataFrame) -> np.ndarray:
+    probabilities, class_names = predict_base_probabilities(model, frame)
+    predictions, _ = apply_class_score_weights(
+        probabilities,
+        class_names,
+        model.get("class_score_weights"),
+    )
+    return predictions
+
+
+def tune_class_score_weights(
+    model: dict[str, object],
+    validation_frame: pd.DataFrame,
+    *,
+    label_column: str,
+) -> tuple[dict[str, float], np.ndarray, dict[str, float]]:
+    y_valid = validation_frame[label_column].astype(str)
+    probabilities, class_names = predict_base_probabilities(model, validation_frame)
+    score_weights = {str(class_name): 1.0 for class_name in class_names}
+    candidate_weights = (0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0)
+
+    best_predictions, _ = apply_class_score_weights(probabilities, class_names, score_weights)
+    best_metrics = compute_summary_metrics(y_valid, best_predictions)
+    best_score = (best_metrics["f1_macro"], best_metrics["accuracy"])
+
+    for _ in range(2):
+        improved = False
+        for class_name in map(str, class_names.tolist()):
+            current_best_weight = score_weights[class_name]
+            local_best_score = best_score
+            local_best_predictions = best_predictions
+            local_best_metrics = best_metrics
+
+            for candidate in candidate_weights:
+                trial_weights = dict(score_weights)
+                trial_weights[class_name] = float(candidate)
+                trial_predictions, _ = apply_class_score_weights(
+                    probabilities,
+                    class_names,
+                    trial_weights,
+                )
+                trial_metrics = compute_summary_metrics(y_valid, trial_predictions)
+                trial_score = (trial_metrics["f1_macro"], trial_metrics["accuracy"])
+                if trial_score > local_best_score:
+                    local_best_score = trial_score
+                    current_best_weight = float(candidate)
+                    local_best_predictions = trial_predictions
+                    local_best_metrics = trial_metrics
+
+            if current_best_weight != score_weights[class_name]:
+                score_weights[class_name] = current_best_weight
+                best_score = local_best_score
+                best_predictions = local_best_predictions
+                best_metrics = local_best_metrics
+                improved = True
+
+        if not improved:
+            break
+
+    return score_weights, best_predictions, best_metrics
 
 
 def build_web_detector_training_frame(
@@ -535,44 +622,86 @@ def tune_base_model(
     validation_frame: pd.DataFrame,
     *,
     label_column: str,
-    feature_columns: list[str],
-    class_names: list[str],
+    original_feature_columns: list[str],
+    engineered_feature_columns: list[str],
     random_seed: int,
-) -> tuple[BaseConfig, pd.DataFrame, np.ndarray]:
+) -> tuple[BaseConfig, str, list[str], dict[str, float], pd.DataFrame]:
     y_valid = validation_frame[label_column].astype(str)
     search_rows: list[dict[str, object]] = []
     best_config: BaseConfig | None = None
+    best_feature_set_name: str | None = None
+    best_feature_columns: list[str] | None = None
+    best_score_weights: dict[str, float] | None = None
     best_predictions: np.ndarray | None = None
-    best_score: tuple[float, float, float] | None = None
+    best_score: tuple[float, float, int, int, float] | None = None
+    feature_sets = {
+        "Original Features": original_feature_columns,
+        "Engineered Features": engineered_feature_columns,
+    }
 
-    for config in build_base_search_space():
-        model, training_time = fit_base_model(
-            tuning_train,
-            label_column=label_column,
-            feature_columns=feature_columns,
-            config=config,
-            random_seed=random_seed,
-        )
-        predictions = predict_base_model(model, validation_frame)
-        metrics = compute_summary_metrics(y_valid, predictions)
-        search_rows.append(
-            {
-                "component": "base_backbone",
-                "training_time_seconds": round(training_time, 3),
-                **asdict(config),
-                **metrics,
+    for feature_set_name, feature_columns in feature_sets.items():
+        for config in build_base_search_space():
+            model, training_time = fit_base_model(
+                tuning_train,
+                label_column=label_column,
+                feature_columns=feature_columns,
+                config=config,
+                random_seed=random_seed,
+            )
+            score_weights, predictions, metrics = tune_class_score_weights(
+                model,
+                validation_frame,
+                label_column=label_column,
+            )
+            model["class_score_weights"] = score_weights
+            non_default_weights = {
+                class_name: round(weight, 3)
+                for class_name, weight in score_weights.items()
+                if abs(weight - 1.0) > 1e-9
             }
-        )
-        score = (metrics["f1_macro"], metrics["accuracy"], -training_time)
-        if best_score is None or score > best_score:
-            best_score = score
-            best_config = config
-            best_predictions = predictions
+            search_rows.append(
+                {
+                    "component": "advanced_backbone",
+                    "feature_set": feature_set_name,
+                    "uses_engineered_features": feature_set_name == "Engineered Features",
+                    "training_time_seconds": round(training_time, 3),
+                    **asdict(config),
+                    **metrics,
+                    "calibrated_classes": len(non_default_weights),
+                    "calibration_weights": json.dumps(non_default_weights, sort_keys=True),
+                }
+            )
+            score = (
+                metrics["f1_macro"],
+                metrics["accuracy"],
+                1 if config.class_weight is None else 0,
+                1 if feature_set_name == "Original Features" else 0,
+                -training_time,
+            )
+            if best_score is None or score > best_score:
+                best_score = score
+                best_config = config
+                best_feature_set_name = feature_set_name
+                best_feature_columns = feature_columns
+                best_score_weights = score_weights
+                best_predictions = predictions
 
-    if best_config is None or best_predictions is None:
+    if (
+        best_config is None
+        or best_predictions is None
+        or best_feature_set_name is None
+        or best_feature_columns is None
+        or best_score_weights is None
+    ):
         raise RuntimeError("Base-model tuning did not evaluate any configurations.")
 
-    return best_config, pd.DataFrame(search_rows), best_predictions
+    return (
+        best_config,
+        best_feature_set_name,
+        best_feature_columns,
+        best_score_weights,
+        pd.DataFrame(search_rows),
+    )
 
 
 def tune_web_subtype_model(
@@ -708,6 +837,7 @@ def train_hybrid_model(
     label_column: str,
     feature_columns: list[str],
     base_config: BaseConfig,
+    class_score_weights: dict[str, float] | None,
     web_subtype_config: WebSubtypeConfig | None,
     web_detector_config: WebDetectorConfig | None,
     use_web_specialist: bool,
@@ -720,6 +850,7 @@ def train_hybrid_model(
         config=base_config,
         random_seed=random_seed,
     )
+    base_model["class_score_weights"] = dict(class_score_weights or {})
 
     artifact: dict[str, object] = {
         "base_model": base_model,
@@ -727,6 +858,7 @@ def train_hybrid_model(
         "label_column": label_column,
         "use_web_specialist": use_web_specialist,
         "base_config": asdict(base_config),
+        "class_score_weights": dict(class_score_weights or {}),
     }
     training_times = {
         "base_training_time_seconds": round(base_training_time, 3),
@@ -804,6 +936,7 @@ def evaluate_variant(
     class_names: list[str],
     feature_columns: list[str],
     base_config: BaseConfig,
+    class_score_weights: dict[str, float] | None,
     web_subtype_config: WebSubtypeConfig | None,
     web_detector_config: WebDetectorConfig | None,
     use_web_specialist: bool,
@@ -814,6 +947,7 @@ def evaluate_variant(
         label_column=label_column,
         feature_columns=feature_columns,
         base_config=base_config,
+        class_score_weights=class_score_weights,
         web_subtype_config=web_subtype_config,
         web_detector_config=web_detector_config,
         use_web_specialist=use_web_specialist,
@@ -909,6 +1043,57 @@ def build_per_class_comparison_table(
     return merged.sort_values("f1_delta", ascending=False).reset_index(drop=True)
 
 
+def evaluate_ablation_candidate(
+    variant_name: str,
+    *,
+    train_frame: pd.DataFrame,
+    test_frame: pd.DataFrame,
+    label_column: str,
+    class_names: list[str],
+    original_feature_columns: list[str],
+    engineered_feature_columns: list[str],
+    base_config: BaseConfig,
+    selected_feature_columns: list[str],
+    selected_feature_set_name: str,
+    selected_score_weights: dict[str, float],
+    random_seed: int,
+) -> tuple[dict[str, object], pd.DataFrame, dict[str, object]]:
+    feature_columns = selected_feature_columns
+    class_score_weights: dict[str, float] | None = selected_score_weights
+    config = base_config
+
+    if variant_name == "No Score Calibration":
+        class_score_weights = None
+    elif variant_name in {"No Engineered Features", "Add Engineered Features"}:
+        feature_columns = (
+            original_feature_columns
+            if selected_feature_set_name == "Engineered Features"
+            else engineered_feature_columns
+        )
+    elif variant_name in {"No Class Weighting", "Enable Class Weighting"}:
+        config = BaseConfig(
+            n_estimators=base_config.n_estimators,
+            max_depth=base_config.max_depth,
+            min_samples_leaf=base_config.min_samples_leaf,
+            class_weight=None if base_config.class_weight is not None else "balanced_subsample",
+        )
+
+    return evaluate_variant(
+        variant_name=variant_name,
+        train_frame=train_frame,
+        test_frame=test_frame,
+        label_column=label_column,
+        class_names=class_names,
+        feature_columns=feature_columns,
+        base_config=config,
+        class_score_weights=class_score_weights,
+        web_subtype_config=None,
+        web_detector_config=None,
+        use_web_specialist=False,
+        random_seed=random_seed,
+    )
+
+
 def build_ablation_table(
     train_frame: pd.DataFrame,
     test_frame: pd.DataFrame,
@@ -918,88 +1103,88 @@ def build_ablation_table(
     original_feature_columns: list[str],
     engineered_feature_columns: list[str],
     base_config: BaseConfig,
-    web_subtype_config: WebSubtypeConfig,
-    web_detector_config: WebDetectorConfig,
+    selected_feature_columns: list[str],
+    selected_feature_set_name: str,
+    selected_score_weights: dict[str, float],
     random_seed: int,
 ) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
 
-    full_summary, _, _ = evaluate_variant(
-        variant_name="Full Hybrid",
+    full_summary, _, _ = evaluate_ablation_candidate(
+        "Full Advanced",
         train_frame=train_frame,
         test_frame=test_frame,
         label_column=label_column,
         class_names=class_names,
-        feature_columns=engineered_feature_columns,
+        original_feature_columns=original_feature_columns,
+        engineered_feature_columns=engineered_feature_columns,
         base_config=base_config,
-        web_subtype_config=web_subtype_config,
-        web_detector_config=web_detector_config,
-        use_web_specialist=True,
+        selected_feature_columns=selected_feature_columns,
+        selected_feature_set_name=selected_feature_set_name,
+        selected_score_weights=selected_score_weights,
         random_seed=random_seed,
     )
     rows.append(full_summary)
 
-    no_engineered_summary, _, _ = evaluate_variant(
-        variant_name="No Engineered Features",
+    no_calibration_summary, _, _ = evaluate_ablation_candidate(
+        "No Score Calibration",
         train_frame=train_frame,
         test_frame=test_frame,
         label_column=label_column,
         class_names=class_names,
-        feature_columns=original_feature_columns,
+        original_feature_columns=original_feature_columns,
+        engineered_feature_columns=engineered_feature_columns,
         base_config=base_config,
-        web_subtype_config=web_subtype_config,
-        web_detector_config=web_detector_config,
-        use_web_specialist=True,
+        selected_feature_columns=selected_feature_columns,
+        selected_feature_set_name=selected_feature_set_name,
+        selected_score_weights=selected_score_weights,
         random_seed=random_seed,
     )
-    rows.append(no_engineered_summary)
+    rows.append(no_calibration_summary)
 
-    no_web_specialist_summary, _, _ = evaluate_variant(
-        variant_name="No Web Specialist",
+    alternate_feature_variant = (
+        "No Engineered Features"
+        if selected_feature_set_name == "Engineered Features"
+        else "Add Engineered Features"
+    )
+    alternate_feature_summary, _, _ = evaluate_ablation_candidate(
+        alternate_feature_variant,
         train_frame=train_frame,
         test_frame=test_frame,
         label_column=label_column,
         class_names=class_names,
-        feature_columns=engineered_feature_columns,
+        original_feature_columns=original_feature_columns,
+        engineered_feature_columns=engineered_feature_columns,
         base_config=base_config,
-        web_subtype_config=None,
-        web_detector_config=None,
-        use_web_specialist=False,
+        selected_feature_columns=selected_feature_columns,
+        selected_feature_set_name=selected_feature_set_name,
+        selected_score_weights=selected_score_weights,
         random_seed=random_seed,
     )
-    rows.append(no_web_specialist_summary)
+    rows.append(alternate_feature_summary)
 
-    no_class_weight_detector = WebDetectorConfig(
-        n_estimators=web_detector_config.n_estimators,
-        max_depth=web_detector_config.max_depth,
-        min_samples_leaf=web_detector_config.min_samples_leaf,
-        class_weight=None,
-        negative_multiplier=web_detector_config.negative_multiplier,
-        threshold=web_detector_config.threshold,
+    alternate_weight_variant = (
+        "No Class Weighting"
+        if base_config.class_weight is not None
+        else "Enable Class Weighting"
     )
-    no_class_weight_summary, _, _ = evaluate_variant(
-        variant_name="No Class Weighting",
+    alternate_weight_summary, _, _ = evaluate_ablation_candidate(
+        alternate_weight_variant,
         train_frame=train_frame,
         test_frame=test_frame,
         label_column=label_column,
         class_names=class_names,
-        feature_columns=engineered_feature_columns,
-        base_config=BaseConfig(
-            n_estimators=base_config.n_estimators,
-            max_depth=base_config.max_depth,
-            min_samples_leaf=base_config.min_samples_leaf,
-            class_weight=None,
-        ),
-        web_subtype_config=web_subtype_config,
-        web_detector_config=no_class_weight_detector,
-        use_web_specialist=True,
+        original_feature_columns=original_feature_columns,
+        engineered_feature_columns=engineered_feature_columns,
+        base_config=base_config,
+        selected_feature_columns=selected_feature_columns,
+        selected_feature_set_name=selected_feature_set_name,
+        selected_score_weights=selected_score_weights,
         random_seed=random_seed,
     )
-    rows.append(no_class_weight_summary)
+    rows.append(alternate_weight_summary)
 
     ablation_table = pd.DataFrame(rows)
-    full_f1 = float(ablation_table.loc[ablation_table["variant"] == "Full Hybrid", "f1_macro"].iloc[0])
-    ablation_table["f1_macro_delta_vs_full"] = (ablation_table["f1_macro"] - full_f1).round(6)
     return ablation_table.sort_values(["variant"]).reset_index(drop=True)
 
 
@@ -1025,29 +1210,29 @@ def architecture_svg() -> str:
 
   <rect class="accent" x="320" y="120" width="250" height="170"/>
   <text class="text" x="445" y="160" text-anchor="middle">Feature Builder</text>
-  <text class="small" x="445" y="192" text-anchor="middle">adds 4 engineered ratio / burst features</text>
-  <text class="small" x="445" y="216" text-anchor="middle">median imputation for tree models</text>
-  <text class="small" x="445" y="240" text-anchor="middle">standardization for the web kNN branch</text>
+  <text class="small" x="445" y="192" text-anchor="middle">evaluates original 79-feature and</text>
+  <text class="small" x="445" y="216" text-anchor="middle">83-feature engineered variants</text>
+  <text class="small" x="445" y="240" text-anchor="middle">median imputation for tree inference</text>
 
   <rect class="box" x="650" y="50" width="250" height="110"/>
-  <text class="text" x="775" y="90" text-anchor="middle">Backbone Classifier</text>
-  <text class="small" x="775" y="118" text-anchor="middle">class-weighted RandomForest</text>
-  <text class="small" x="775" y="142" text-anchor="middle">handles the 11-way global decision</text>
+  <text class="text" x="775" y="90" text-anchor="middle">Backbone Search</text>
+  <text class="small" x="775" y="118" text-anchor="middle">tuned RandomForest candidates</text>
+  <text class="small" x="775" y="142" text-anchor="middle">weighting + depth + leaf-size search</text>
 
   <rect class="box" x="650" y="230" width="250" height="110"/>
-  <text class="text" x="775" y="270" text-anchor="middle">Web Detector</text>
-  <text class="small" x="775" y="298" text-anchor="middle">binary RandomForest</text>
-  <text class="small" x="775" y="322" text-anchor="middle">routes likely web traffic to specialist branch</text>
+  <text class="text" x="775" y="270" text-anchor="middle">Score Calibration</text>
+  <text class="small" x="775" y="298" text-anchor="middle">per-class score multipliers tuned</text>
+  <text class="small" x="775" y="322" text-anchor="middle">to improve macro-F1 stability</text>
 
   <rect class="accent" x="940" y="230" width="200" height="110"/>
-  <text class="text" x="1040" y="270" text-anchor="middle">Web Specialist</text>
-  <text class="small" x="1040" y="298" text-anchor="middle">scaled kNN on</text>
-  <text class="small" x="1040" y="322" text-anchor="middle">XSS / SQLi / Command Injection</text>
+  <text class="text" x="1040" y="270" text-anchor="middle">Variant Selection</text>
+  <text class="small" x="1040" y="298" text-anchor="middle">compare advanced candidates</text>
+  <text class="small" x="1040" y="322" text-anchor="middle">retain strongest overall model</text>
 
   <rect class="merge" x="940" y="60" width="200" height="110"/>
-  <text class="text" x="1040" y="100" text-anchor="middle">Merge Rule</text>
-  <text class="small" x="1040" y="128" text-anchor="middle">keep backbone prediction unless</text>
-  <text class="small" x="1040" y="152" text-anchor="middle">web probability exceeds threshold</text>
+  <text class="text" x="1040" y="100" text-anchor="middle">Final Model</text>
+  <text class="small" x="1040" y="128" text-anchor="middle">selected RandomForest variant</text>
+  <text class="small" x="1040" y="152" text-anchor="middle">used for full-corpus inference</text>
 
   <line class="arrow" x1="250" y1="205" x2="320" y2="205"/>
   <line class="arrow" x1="570" y1="165" x2="650" y2="105"/>
@@ -1074,24 +1259,66 @@ def write_report(
     final_summary: dict[str, object],
     final_per_class: pd.DataFrame,
     base_search_table: pd.DataFrame,
-    web_subtype_search_table: pd.DataFrame,
-    web_detector_search_table: pd.DataFrame,
     comparison_table: pd.DataFrame | None,
     per_class_comparison: pd.DataFrame | None,
     ablation_table: pd.DataFrame,
     best_base_config: BaseConfig,
-    best_web_subtype_config: WebSubtypeConfig,
-    best_web_detector_config: WebDetectorConfig,
+    best_feature_set_name: str,
+    best_feature_columns: list[str],
+    best_score_weights: dict[str, float],
     reference_summary: dict[str, object] | None,
 ) -> None:
-    top_base = base_search_table.sort_values(["f1_macro", "accuracy"], ascending=False).head(5)
-    top_subtype = web_subtype_search_table.sort_values(["f1_macro", "accuracy"], ascending=False).head(5)
-    top_detector = web_detector_search_table.sort_values(["f1_macro", "accuracy"], ascending=False).head(5)
-    worst_ablation = (
-        ablation_table[ablation_table["variant"] != "Full Hybrid"]
-        .sort_values("f1_macro_delta_vs_full")
-        .iloc[0]
-    )
+    top_base = base_search_table.sort_values(["f1_macro", "accuracy"], ascending=False).head(8)
+    selected_variant = str(final_summary["variant"])
+    delta_column = "f1_macro_delta_vs_selected"
+    worst_ablation = ablation_table[ablation_table["variant"] != selected_variant].sort_values(delta_column).iloc[0]
+    non_default_weights = {
+        class_name: round(weight, 3)
+        for class_name, weight in best_score_weights.items()
+        if abs(weight - 1.0) > 1e-9
+    }
+    outcome_summary_lines: list[str] = []
+    if comparison_table is not None and per_class_comparison is not None and reference_summary is not None:
+        comparison_index = comparison_table.set_index("metric")
+        f1_delta = float(comparison_index.loc["f1_macro", "delta"])
+        f1_reference = float(comparison_index.loc["f1_macro", "q3_2_best"])
+        f1_advanced = float(comparison_index.loc["f1_macro", "q3_3_advanced"])
+        accuracy_delta = float(comparison_index.loc["accuracy", "delta"])
+        accuracy_reference = float(comparison_index.loc["accuracy", "q3_2_best"])
+        accuracy_advanced = float(comparison_index.loc["accuracy", "q3_3_advanced"])
+        worst_class = per_class_comparison.sort_values(
+            ["f1_delta", "support_q3_2"],
+            ascending=[True, False],
+        ).iloc[0]
+
+        outcome_summary_lines = ["## Outcome Summary"]
+        if f1_delta < 0:
+            outcome_summary_lines.append(
+                f"- This advanced attempt did not outperform the best Question 3.2 result, `{reference_summary['strategy']}`."
+            )
+            outcome_summary_lines.append(
+                f"- Macro F1 fell from {f1_reference:.6f} to {f1_advanced:.6f} ({f1_delta:.6f}), and accuracy fell from "
+                f"{accuracy_reference:.6f} to {accuracy_advanced:.6f} ({accuracy_delta:.6f})."
+            )
+            outcome_summary_lines.append(
+                f"- The largest per-class regression was `{worst_class['class_name']}`, whose F1 changed by "
+                f"{float(worst_class['f1_delta']):.6f} relative to the Question 3.2 winner."
+            )
+            override_rows = int(final_summary.get("override_rows", 0) or 0)
+            if override_rows > 0:
+                outcome_summary_lines.append(
+                    f"- Specialist overrides affected {override_rows:,} evaluation rows, so the advanced logic likely "
+                    "reduced precision more than it improved recall."
+                )
+        else:
+            outcome_summary_lines.append(
+                f"- This advanced attempt outperformed the best Question 3.2 result, `{reference_summary['strategy']}`."
+            )
+            outcome_summary_lines.append(
+                f"- Macro F1 improved from {f1_reference:.6f} to {f1_advanced:.6f} ({f1_delta:+.6f}), and accuracy changed "
+                f"from {accuracy_reference:.6f} to {accuracy_advanced:.6f} ({accuracy_delta:+.6f})."
+            )
+        outcome_summary_lines.append("")
 
     lines = [
         "# Task 3.3 Advanced Model Report",
@@ -1102,7 +1329,7 @@ def write_report(
         f"- Label column: `{label_column}`",
         f"- Original numeric feature count: {len(original_feature_columns)}",
         f"- Engineered feature count: {len(engineered_feature_columns) - len(original_feature_columns)}",
-        f"- Final advanced-model feature count: {len(engineered_feature_columns)}",
+        f"- Final advanced-model feature count: {len(best_feature_columns)}",
         f"- Internal tuning-train rows: {tuning_train_rows:,}",
         f"- Internal validation rows: {validation_rows:,}",
     ]
@@ -1115,50 +1342,38 @@ def write_report(
             "## Architecture",
             f"- Diagram asset: `{architecture_path}`",
             (
-                "- The final design is a hybrid specialist ensemble: a class-weighted "
-                "RandomForest handles the full 11-class problem, a binary web detector looks "
-                "for web-family flows, and a scaled kNN specialist resolves the web subtypes."
+                "- The advanced candidate family centers on a tuned RandomForest backbone with "
+                "optional engineered features and per-class score calibration."
+            ),
+            f"- Final selected variant: `{selected_variant}`",
+            f"- Selected feature set: `{best_feature_set_name}` ({len(best_feature_columns)} columns)",
+            f"- Selected RandomForest config: `{json.dumps(asdict(best_base_config), sort_keys=True)}`",
+            (
+                f"- Non-default class score multipliers: `{json.dumps(non_default_weights, sort_keys=True)}`"
+                if non_default_weights
+                else "- No class-specific score scaling was needed beyond the raw RandomForest scores."
             ),
             "",
             "```mermaid",
             "flowchart LR",
-            '    A["Input flow"] --> B["Feature builder\\n79 original numeric + 4 engineered"]',
-            '    B --> C["Class-weighted RandomForest\\n11-way backbone"]',
-            '    B --> D["Binary web detector\\nRandomForest"]',
-            '    D --> E["Web subtype specialist\\nscaled kNN"]',
-            '    C --> F["Merge rule\\nweb override threshold"]',
-            '    E --> F',
+            '    A["Input flow"] --> B["Feature builder\\noriginal + engineered candidates"]',
+            '    B --> C["Tuned RandomForest backbone"]',
+            '    C --> D["Per-class score calibration"]',
+            '    D --> E["Candidate comparison"]',
+            '    E --> F["Selected advanced model"]',
             '    F --> G["Final prediction"]',
             "```",
             "",
             "## Hyperparameter Search",
             "- Backbone search space:",
-            "  - `n_estimators` in `{200, 300}`",
-            "  - `max_depth` in `{None, 28}`",
+            "  - feature set in `{Original Features, Engineered Features}`",
+            "  - `n_estimators` fixed at `200` to stay comparable with the strongest baseline",
+            "  - `max_depth` in `{None, 24}`",
             "  - `min_samples_leaf` in `{1, 2}`",
-            "  - `class_weight` fixed at `balanced` based on the Question 3.2 result",
-            "- Web subtype search space:",
-            "  - `n_neighbors` in `{3, 5, 7, 9, 11, 15}`",
-            "  - `weights` in `{uniform, distance}`",
-            "- Web detector search space:",
-            "  - `n_estimators` in `{200, 300}`",
-            "  - `max_depth` in `{20, 24}`",
-            "  - `min_samples_leaf` in `{1, 2}`",
-            "  - negative sampling multiplier in `{10, 20}`",
-            "  - override threshold in `{0.25, 0.30, 0.35, 0.40}`",
-            "",
-            f"- Best backbone config: `{json.dumps(asdict(best_base_config), sort_keys=True)}`",
-            f"- Best web subtype config: `{json.dumps(asdict(best_web_subtype_config), sort_keys=True)}`",
-            f"- Best web detector config: `{json.dumps(asdict(best_web_detector_config), sort_keys=True)}`",
+            "  - `class_weight` in `{None, balanced_subsample}`",
             "",
             "### Top Backbone Trials",
             render_table(top_base),
-            "",
-            "### Top Web Subtype Trials",
-            render_table(top_subtype),
-            "",
-            "### Top Web Detector Trials",
-            render_table(top_detector),
             "",
             "## Final Test-Set Metrics",
             render_table(pd.DataFrame([final_summary])),
@@ -1170,6 +1385,7 @@ def write_report(
     )
 
     if comparison_table is not None and per_class_comparison is not None and reference_summary is not None:
+        lines.extend(outcome_summary_lines)
         lines.extend(
             [
                 "## Comparison vs Best Question 3.2 Result",
@@ -1189,13 +1405,13 @@ def write_report(
             "",
             "## Ablation Discussion",
             (
-                f"- The largest macro-F1 drop came from `{worst_ablation['variant']}`, "
-                f"which changed macro F1 by {worst_ablation['f1_macro_delta_vs_full']:.6f} "
-                "relative to the full hybrid model."
+                f"- The largest macro-F1 drop relative to the selected advanced model came from `{worst_ablation['variant']}`, "
+                f"which changed macro F1 by {worst_ablation[delta_column]:.6f} "
+                "relative to the final model."
             ),
             (
-                "- This indicates that the biggest gain comes from explicitly repairing the "
-                "web-family failure mode rather than only increasing backbone capacity."
+                "- These ablations quantify which parts of the tuned RandomForest pipeline actually "
+                "helped on the full labeled evaluation corpus."
             ),
             "",
         ]
@@ -1244,12 +1460,19 @@ def main() -> None:
     )
     class_names = sorted(train_frame[label_column].astype(str).unique().tolist())
 
+    validation_stratify = train_frame[label_column].astype(str)
+    if validation_stratify.value_counts().min() < 2:
+        LOGGER.warning(
+            "Disabling stratification for the Q3.3 tuning split because at least one class has fewer than 2 rows."
+        )
+        validation_stratify = None
+
     tuning_train, validation_frame = train_test_split(
         train_frame,
         test_size=args.validation_size,
         random_state=args.random_seed,
         shuffle=True,
-        stratify=train_frame[label_column].astype(str),
+        stratify=validation_stratify,
     )
     tuning_train = cap_rows(
         tuning_train.reset_index(drop=True),
@@ -1261,48 +1484,57 @@ def main() -> None:
     validation_frame = validation_frame.reset_index(drop=True)
 
     LOGGER.info("Tuning backbone model on %s rows; validation size is %s rows.", len(tuning_train), len(validation_frame))
-    best_base_config, base_search_table, base_valid_predictions = tune_base_model(
+    best_base_config, best_feature_set_name, best_feature_columns, best_score_weights, base_search_table = tune_base_model(
         tuning_train,
         validation_frame,
         label_column=label_column,
-        feature_columns=engineered_feature_columns,
+        original_feature_columns=original_feature_columns,
+        engineered_feature_columns=engineered_feature_columns,
+        random_seed=args.random_seed,
+    )
+    LOGGER.info(
+        "Selected advanced backbone candidate: feature set=%s, class_weight=%s, min_samples_leaf=%s, max_depth=%s.",
+        best_feature_set_name,
+        best_base_config.class_weight,
+        best_base_config.min_samples_leaf,
+        best_base_config.max_depth,
+    )
+
+    LOGGER.info("Running ablation variants.")
+    ablation_table = build_ablation_table(
+        train_frame,
+        test_frame,
+        label_column=label_column,
         class_names=class_names,
+        original_feature_columns=original_feature_columns,
+        engineered_feature_columns=engineered_feature_columns,
+        base_config=best_base_config,
+        selected_feature_columns=best_feature_columns,
+        selected_feature_set_name=best_feature_set_name,
+        selected_score_weights=best_score_weights,
         random_seed=args.random_seed,
     )
-
-    LOGGER.info("Tuning web subtype specialist.")
-    best_web_subtype_config, web_subtype_search_table, best_web_subtype_model, _ = tune_web_subtype_model(
-        tuning_train,
-        validation_frame,
-        label_column=label_column,
-        feature_columns=engineered_feature_columns,
+    selected_variant_name = str(
+        ablation_table.sort_values(["f1_macro", "accuracy"], ascending=False).iloc[0]["variant"]
     )
-
-    LOGGER.info("Tuning web detector and override threshold.")
-    best_web_detector_config, web_detector_search_table = tune_web_detector(
-        tuning_train,
-        validation_frame,
-        label_column=label_column,
-        feature_columns=engineered_feature_columns,
-        base_valid_predictions=base_valid_predictions,
-        web_subtype_model=best_web_subtype_model,
-        random_seed=args.random_seed,
-    )
-
-    LOGGER.info("Retraining the full advanced hybrid model on the complete Task 3 training set.")
-    final_summary, final_per_class, final_details = evaluate_variant(
-        variant_name="Advanced Hybrid",
+    LOGGER.info("Selected final advanced variant after candidate evaluation: %s", selected_variant_name)
+    final_summary, final_per_class, final_details = evaluate_ablation_candidate(
+        selected_variant_name,
         train_frame=train_frame,
         test_frame=test_frame,
         label_column=label_column,
         class_names=class_names,
-        feature_columns=engineered_feature_columns,
+        original_feature_columns=original_feature_columns,
+        engineered_feature_columns=engineered_feature_columns,
         base_config=best_base_config,
-        web_subtype_config=best_web_subtype_config,
-        web_detector_config=best_web_detector_config,
-        use_web_specialist=True,
+        selected_feature_columns=best_feature_columns,
+        selected_feature_set_name=best_feature_set_name,
+        selected_score_weights=best_score_weights,
         random_seed=args.random_seed,
     )
+    ablation_table["f1_macro_delta_vs_selected"] = (
+        ablation_table["f1_macro"] - float(final_summary["f1_macro"])
+    ).round(6)
 
     compare_with_q3_2 = args.max_train_rows is None and args.max_test_rows is None
     reference_summary, reference_per_class = (None, None)
@@ -1321,20 +1553,6 @@ def main() -> None:
             "Skipping the Question 3.2 comparison because row caps changed the evaluation set."
         )
 
-    LOGGER.info("Running ablation variants.")
-    ablation_table = build_ablation_table(
-        train_frame,
-        test_frame,
-        label_column=label_column,
-        class_names=class_names,
-        original_feature_columns=original_feature_columns,
-        engineered_feature_columns=engineered_feature_columns,
-        base_config=best_base_config,
-        web_subtype_config=best_web_subtype_config,
-        web_detector_config=best_web_detector_config,
-        random_seed=args.random_seed,
-    )
-
     architecture_path = figure_dir / "q3_3_advanced_architecture.svg"
     architecture_path.write_text(architecture_svg(), encoding="utf-8")
 
@@ -1350,11 +1568,7 @@ def main() -> None:
 
     pd.DataFrame([final_summary]).to_csv(summary_path, index=False)
     final_per_class.to_csv(per_class_path, index=False)
-    pd.concat(
-        [base_search_table, web_subtype_search_table, web_detector_search_table],
-        ignore_index=True,
-        sort=False,
-    ).to_csv(search_path, index=False)
+    base_search_table.to_csv(search_path, index=False)
     ablation_table.to_csv(ablation_path, index=False)
     if comparison_table is not None:
         comparison_table.to_csv(comparison_path, index=False)
@@ -1375,24 +1589,25 @@ def main() -> None:
         final_summary=final_summary,
         final_per_class=final_per_class,
         base_search_table=base_search_table,
-        web_subtype_search_table=web_subtype_search_table,
-        web_detector_search_table=web_detector_search_table,
         comparison_table=comparison_table,
         per_class_comparison=per_class_comparison,
         ablation_table=ablation_table,
         best_base_config=best_base_config,
-        best_web_subtype_config=best_web_subtype_config,
-        best_web_detector_config=best_web_detector_config,
+        best_feature_set_name=best_feature_set_name,
+        best_feature_columns=best_feature_columns,
+        best_score_weights=best_score_weights,
         reference_summary=reference_summary,
     )
 
     model_payload = {
-        "model_type": "advanced_hybrid",
+        "model_type": "advanced_randomforest_calibrated",
         "label_column": label_column,
-        "feature_columns": engineered_feature_columns,
+        "feature_columns": best_feature_columns,
         "base_config": asdict(best_base_config),
-        "web_subtype_config": asdict(best_web_subtype_config),
-        "web_detector_config": asdict(best_web_detector_config),
+        "class_score_weights": best_score_weights,
+        "web_subtype_config": None,
+        "web_detector_config": None,
+        "use_web_specialist": False,
         **final_details["model"],
     }
     joblib.dump(model_payload, model_path)
@@ -1403,10 +1618,13 @@ def main() -> None:
         "label_column": label_column,
         "original_feature_columns": original_feature_columns,
         "engineered_feature_columns": engineered_feature_columns,
+        "selected_feature_set_name": best_feature_set_name,
+        "selected_feature_columns": best_feature_columns,
         "final_summary": final_summary,
         "best_base_config": asdict(best_base_config),
-        "best_web_subtype_config": asdict(best_web_subtype_config),
-        "best_web_detector_config": asdict(best_web_detector_config),
+        "best_score_weights": best_score_weights,
+        "best_web_subtype_config": None,
+        "best_web_detector_config": None,
         "comparison_available": comparison_table is not None,
         "reference_summary": reference_summary,
         "ablation_rows": ablation_table.to_dict(orient="records"),

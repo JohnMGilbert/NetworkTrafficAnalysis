@@ -7,6 +7,7 @@ import json
 import logging
 import math
 import os
+import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -37,6 +38,7 @@ from src.common.seed import set_global_seed
 
 LOGGER = logging.getLogger("task2.q2_1b")
 METADATA_COLUMNS = ("router_id", "src_ip", "dst_ip", "timestamp")
+ROUTER_LABEL_PATTERN = re.compile(r"^D(\d+)$", flags=re.IGNORECASE)
 
 
 def parse_args() -> argparse.Namespace:
@@ -101,6 +103,14 @@ def parquet_batches(path: Path, columns: list[str] | None, batch_size: int):
 def discover_feature_columns(path: Path) -> list[str]:
     schema = pq.ParquetFile(path).schema_arrow
     return [name for name in schema.names if name not in METADATA_COLUMNS]
+
+
+def router_sort_key(router_id: object) -> tuple[int, int | str]:
+    text = str(router_id)
+    match = ROUTER_LABEL_PATTERN.match(text)
+    if match:
+        return (0, int(match.group(1)))
+    return (1, text)
 
 
 def count_router_rows(path: Path, batch_size: int) -> Counter[str]:
@@ -208,7 +218,7 @@ def stratified_sample(
             "population_rows": [router_counts[router_id] for router_id in router_counts],
             "sample_rows": [targets[router_id] for router_id in router_counts],
         }
-    ).sort_values("router_id", ignore_index=True)
+    ).sort_values("router_id", key=lambda series: series.map(router_sort_key), ignore_index=True)
     return sample, allocation
 
 
@@ -255,7 +265,7 @@ def color_map_for_categories(categories: list[str]) -> dict[str, tuple[float, fl
 
 
 def save_umap_plot(embedding: pd.DataFrame, figure_path: Path) -> None:
-    routers = sorted(embedding["router_id"].astype(str).unique().tolist())
+    routers = sorted(embedding["router_id"].astype(str).unique().tolist(), key=router_sort_key)
     color_map = color_map_for_categories(routers)
 
     plt.figure(figsize=(12, 8))

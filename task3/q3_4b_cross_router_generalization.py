@@ -445,6 +445,7 @@ def retrain_advanced_hybrid(
         label_column=label_column,
         feature_columns=list(serialized_artifact["feature_columns"]),
         base_config=base_config,
+        class_score_weights=serialized_artifact.get("class_score_weights"),
         web_subtype_config=web_subtype_config,
         web_detector_config=web_detector_config,
         use_web_specialist=bool(serialized_artifact.get("use_web_specialist", False)),
@@ -462,11 +463,12 @@ def retrain_advanced_hybrid(
         "override_rows": int(np.asarray(extras["override_mask"]).sum()),
     }
     model_payload = {
-        "model_type": "cross_router_advanced_hybrid",
+        "model_type": "cross_router_advanced_model",
         "label_column": label_column,
         "feature_columns": list(serialized_artifact["feature_columns"]),
         "train_hybrid_artifact": model_artifact,
         "base_config": serialized_artifact["base_config"],
+        "class_score_weights": serialized_artifact.get("class_score_weights"),
         "web_subtype_config": serialized_artifact.get("web_subtype_config"),
         "web_detector_config": serialized_artifact.get("web_detector_config"),
         "use_web_specialist": bool(serialized_artifact.get("use_web_specialist", False)),

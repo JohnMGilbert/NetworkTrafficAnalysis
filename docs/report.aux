@@ -1,0 +1,110 @@
+\relax 
+\@writefile{toc}{\contentsline {section}{\numberline {I}Introduction}{1}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {II}Task 1: Network Topology Reconstruction}{1}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-A}}Question 1.1: Exploratory Data Analysis}{1}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {I}{\ignorespaces Q1.1(a) per-router exploratory summary. Duration values are reported in the raw CICFlowMeter units used by the dataset.}}{1}{}\protected@file@percent }
+\newlabel{tab:q1_router_summary}{{I}{1}{}{table.1}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Q1.1(b) per-router traffic-volume distributions using total bytes per flow.}}{2}{}\protected@file@percent }
+\newlabel{fig:q1_volume}{{1}{2}{}{figure.1}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {II}{\ignorespaces Q1.1(c) top features by between-router to within-router variance ratio.}}{2}{}\protected@file@percent }
+\newlabel{tab:q1_top_features}{{II}{2}{}{table.2}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {III}{\ignorespaces Q1.2(b) graph-construction comparison.}}{2}{}\protected@file@percent }
+\newlabel{tab:q1_graph_methods}{{III}{2}{}{table.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-B}}Question 1.2: Router Similarity and Adjacency Estimation}{2}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Q1.1(c) top-10 features ranked by between-router to within-router variance ratio.}}{3}{}\protected@file@percent }
+\newlabel{fig:q1_variance}{{2}{3}{}{figure.2}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Q1.2(a) cosine-similarity matrix over standardized per-router mean feature profiles.}}{3}{}\protected@file@percent }
+\newlabel{fig:q1_similarity}{{3}{3}{}{figure.3}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Q1.2(b) force-directed adjacency visualizations for the kNN and maximum-spanning-tree approaches.}}{4}{}\protected@file@percent }
+\newlabel{fig:q1_adjacency}{{4}{4}{}{figure.4}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {IV}{\ignorespaces Q1.2(c) strongest IP and port/protocol tuple overlap pairs.}}{4}{}\protected@file@percent }
+\newlabel{tab:q1_overlap}{{IV}{4}{}{table.4}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {V}{\ignorespaces Q1.3(a) reconstructed topology edges and selected edge weights.}}{4}{}\protected@file@percent }
+\newlabel{tab:q1_edges}{{V}{4}{}{table.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-C}}Question 1.3: Topology Reconstruction and Validation}{4}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Q1.2(c) IP-set Jaccard overlap matrix across routers.}}{5}{}\protected@file@percent }
+\newlabel{fig:q1_ip_heatmap}{{5}{5}{}{figure.5}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {VI}{\ignorespaces Q1.3(b) graph-theoretic properties for the reconstructed topology.}}{5}{}\protected@file@percent }
+\newlabel{tab:q1_graph_properties}{{VI}{5}{}{table.6}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {III}Task 2: Attack Discovery and Classification}{5}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-A}}Question 2.1: Preprocessing, Dimensionality Reduction, and Features}{5}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces Q1.2(c) Jaccard similarity of \texttt  {(src\_port, dst\_port, protocol)} tuples across routers.}}{6}{}\protected@file@percent }
+\newlabel{fig:q1_tuple_heatmap}{{6}{6}{}{figure.6}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {VII}{\ignorespaces Q1.3(c) comparison with the public GEANT-2012 topology.}}{6}{}\protected@file@percent }
+\newlabel{tab:q1_geant}{{VII}{6}{}{table.7}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {VIII}{\ignorespaces Q2.1(a) preprocessing summary.}}{6}{}\protected@file@percent }
+\newlabel{tab:q2_preprocess}{{VIII}{6}{}{table.8}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces Q1.2(c) refined maximum-spanning-tree graph after combining feature similarity, IP overlap, and tuple overlap.}}{7}{}\protected@file@percent }
+\newlabel{fig:q1_refined_mst}{{7}{7}{}{figure.7}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {8}{\ignorespaces Q1.3(a) reconstructed ten-router topology with weighted edge evidence.}}{7}{}\protected@file@percent }
+\newlabel{fig:q1_topology}{{8}{7}{}{figure.8}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {9}{\ignorespaces Q2.1(b) PCA cumulative explained variance. Eighteen components retain at least 95\% of variance.}}{8}{}\protected@file@percent }
+\newlabel{fig:q2_pca}{{9}{8}{}{figure.9}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {10}{\ignorespaces Q2.1(b) UMAP embedding colored by router ID for the stratified 100,000-row sample.}}{8}{}\protected@file@percent }
+\newlabel{fig:q2_umap}{{10}{8}{}{figure.10}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-B}}Question 2.2: Unsupervised Attack Discovery}{8}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {IX}{\ignorespaces Q2.1(c) engineered features and network intuition.}}{9}{}\protected@file@percent }
+\newlabel{tab:q2_engineered}{{IX}{9}{}{table.9}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {11}{\ignorespaces Q2.1(c) engineered-feature distributions across the final discovered HDBSCAN clusters. Each boxplot shows the median, interquartile range, whiskers, and outliers for one engineered feature within one cluster; the x-axis labels give both cluster IDs and the semantic mappings used later in Q2.2(c).}}{9}{}\protected@file@percent }
+\newlabel{fig:q2_engineered}{{11}{9}{}{figure.11}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {X}{\ignorespaces Q2.2(a) selected clustering algorithms and hyperparameters.}}{9}{}\protected@file@percent }
+\newlabel{tab:q2_cluster_config}{{X}{9}{}{table.10}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {12}{\ignorespaces Q2.2(a) MiniBatchKMeans, HDBSCAN, and GaussianMixture cluster assignments projected onto the Q2.1(b) UMAP space.}}{10}{}\protected@file@percent }
+\newlabel{fig:q2_clusters}{{12}{10}{}{figure.12}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {XI}{\ignorespaces Q2.2(b) internal validation metrics for clustering. Higher silhouette and Calinski-Harabasz are better; lower Davies-Bouldin is better.}}{10}{}\protected@file@percent }
+\newlabel{tab:q2_validation}{{XI}{10}{}{table.11}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {XII}{\ignorespaces Q2.2(c) HDBSCAN cluster-to-class mapping.}}{10}{}\protected@file@percent }
+\newlabel{tab:q2_mapping}{{XII}{10}{}{table.12}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-C}}Question 2.3: Discovery Analysis}{10}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {IV}Task 3: Supervised Attack Classification}{10}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-A}}Question 3.1: Baseline Models}{10}{}\protected@file@percent }
+\gdef \LT@i {\LT@entry 
+    {3}{67.44518pt}\LT@entry 
+    {3}{81.42525pt}\LT@entry 
+    {1}{38.05362pt}\LT@entry 
+    {1}{29.88467pt}\LT@entry 
+    {3}{27.75002pt}\LT@entry 
+    {3}{30.50002pt}}
+\@writefile{lot}{\contentsline {table}{\numberline {XIII}{\ignorespaces Q2.3(a) inferred class discoverability ranking.}}{11}{}\protected@file@percent }
+\newlabel{tab:q2_discoverability}{{XIII}{11}{}{table.13}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {XIV}{\ignorespaces Q3.1(a) baseline model comparison.}}{11}{}\protected@file@percent }
+\newlabel{tab:q3_baselines}{{XIV}{11}{}{table.14}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {XVI}{\ignorespaces Q3.2(a) imbalance-handling strategy comparison.}}{11}{}\protected@file@percent }
+\newlabel{tab:q3_imbalance}{{XVI}{11}{}{table.16}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {XV}{Q3.1(a) per-class precision, recall, and F1 for the three baseline models.}}{11}{}\protected@file@percent }
+\newlabel{tab:q3_baseline_perclass}{{XV}{11}{}{table.15}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-B}}Question 3.2: Handling Class Imbalance}{11}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {13}{\ignorespaces Q3.1(b) top-20 RandomForest feature importances.}}{12}{}\protected@file@percent }
+\newlabel{fig:q3_importance}{{13}{12}{}{figure.13}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {XVII}{\ignorespaces Q3.2(b) rare-class and majority-class tradeoff summary.}}{12}{}\protected@file@percent }
+\newlabel{tab:q3_rare_summary}{{XVII}{12}{}{table.17}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {XVIII}{\ignorespaces Q3.3(a) final advanced-model metrics and comparison with best Q3.2 result.}}{12}{}\protected@file@percent }
+\newlabel{tab:q3_advanced}{{XVIII}{12}{}{table.18}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-C}}Question 3.3: Advanced Model}{12}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {14}{\ignorespaces Q3.1(c) confusion matrix for the best baseline RandomForest model.}}{13}{}\protected@file@percent }
+\newlabel{fig:q3_confusion}{{14}{13}{}{figure.14}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {15}{\ignorespaces Q3.2(b) rare-class F1 scores under the imbalance-handling strategies.}}{13}{}\protected@file@percent }
+\newlabel{fig:q3_rare}{{15}{13}{}{figure.15}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {16}{\ignorespaces Q3.3(a) advanced-model architecture. Candidate variants optionally added engineered features before the tuned RandomForest and calibration stage; the selected variant used original features only.}}{14}{}\protected@file@percent }
+\newlabel{fig:q3_arch}{{16}{14}{}{figure.16}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {XIX}{\ignorespaces Q3.3(a) per-class metrics for the final advanced model.}}{14}{}\protected@file@percent }
+\newlabel{tab:q3_advanced_perclass}{{XIX}{14}{}{table.19}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {XX}{\ignorespaces Q3.3(b) ablation study.}}{14}{}\protected@file@percent }
+\newlabel{tab:q3_ablation}{{XX}{14}{}{table.20}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {XXI}{\ignorespaces Q3.4(a) router-level performance summary. Macro F1 is computed over classes present at each router.}}{14}{}\protected@file@percent }
+\newlabel{tab:q3_router_summary}{{XXI}{14}{}{table.21}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-D}}Question 3.4: Router-Level Analysis}{14}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {17}{\ignorespaces Q3.4(a) per-router, per-class F1 heatmap for the selected advanced model.}}{15}{}\protected@file@percent }
+\newlabel{fig:q3_router_heatmap}{{17}{15}{}{figure.17}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {XXII}{\ignorespaces Q3.4(b) standard versus cross-router generalization metrics.}}{15}{}\protected@file@percent }
+\newlabel{tab:q3_cross_router}{{XXII}{15}{}{table.22}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {18}{\ignorespaces Q3.4(b) standard evaluation versus cross-router generalization on D8--D10.}}{15}{}\protected@file@percent }
+\newlabel{fig:q3_cross_router}{{18}{15}{}{figure.18}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {V}Conclusion}{15}{}\protected@file@percent }
+\bibcite{flnet}{1}
+\bibcite{core}{2}
+\bibcite{cicflowmeter}{3}
+\bibcite{topologyzoo}{4}
+\bibcite{topohub}{5}
+\@writefile{toc}{\contentsline {section}{References}{16}{}\protected@file@percent }
+\gdef \@abspage@last{16}

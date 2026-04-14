@@ -177,16 +177,16 @@ Run the advanced-model workflow with:
 
 The script builds a tuned hybrid model designed to fix the main failure mode we observed in Questions 3.1 and 3.2:
 
-- a class-weighted `RandomForest` backbone for the full 11-class decision
-- a binary web-family detector that flags likely web traffic
-- a scaled `kNN` specialist that separates `Web-xss`, `Web-sql-injection`, and `Web-command-injection`
-- four engineered ratio / burst features carried over from Task 2
+- tuned `RandomForest` backbone candidates for the full 11-class decision
+- a comparison between original numeric features and the Task 2 engineered ratio / burst features
+- optional class weighting and depth/leaf-size tuning
+- per-class score calibration tuned on an internal validation split
 
 The workflow automatically:
 
 - creates an internal train/validation split for hyperparameter selection
-- searches the backbone, web-detector, and web-specialist hyperparameters
-- retrains the best hybrid model on the full Task 3 training set
+- searches the backbone feature set, weighting, depth, and score-calibration settings
+- retrains the best advanced candidate on the full Task 3 training set
 - reports all Question 3.1(a) metrics on the full evaluation corpus
 - compares the result with the best Question 3.2 strategy when those outputs are available
 - runs a 3-component ablation study

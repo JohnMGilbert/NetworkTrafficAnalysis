@@ -109,10 +109,12 @@ Run the HDBSCAN cluster-interpretation workflow with:
 Artifacts written by default:
 
 - `outputs/task2/tables/q2_2c_hdbscan_cluster_statistics.csv`
+- `outputs/task2/tables/q2_2c_hdbscan_engineered_feature_distributions.csv`
 - `outputs/task2/tables/q2_2c_hdbscan_cluster_mapping.csv`
 - `outputs/task2/tables/q2_2c_hdbscan_confusion_style_mapping.csv`
 - `outputs/task2/tables/q2_2c_hdbscan_summary.json`
 - `outputs/task2/tables/q2_2c_hdbscan_report.md`
+- `outputs/task2/figures/q2_2c_hdbscan_engineered_feature_distributions.png`
 
 ## Question 2.3(a)
 

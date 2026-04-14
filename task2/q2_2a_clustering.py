@@ -556,9 +556,9 @@ def write_report(
         "",
         "## Sampling Strategy",
         (
-            f"The clustering experiments reuse the stratified 100,000-row sample created in Question 2.1(b), "
-            f"which preserves the router distribution while keeping the computation tractable on the 5,377,256-row "
-            f"preprocessed dataset. The final clustering models are fitted on a stratified {fit_size:,}-row subset of "
+            f"The clustering experiments reuse the stratified {sample_size:,}-row sample created in Question 2.1(b), "
+            "which preserves the router distribution while keeping computation tractable on the full preprocessed "
+            f"dataset. The final clustering models are fitted on a stratified {fit_size:,}-row subset of "
             f"that sample, and hyperparameter selection uses a random {selection_size:,}-row subset of the fit set so "
             "that silhouette- and BIC-based comparisons remain practical."
         ),

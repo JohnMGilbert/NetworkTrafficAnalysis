@@ -21,27 +21,12 @@ from src.common.paths import ensure_directory
 ALGORITHM_INTERPRETATIONS = {
     "HDBSCAN": {
         "rare_behavior": "noise_or_outliers",
-        "evidence": (
-            "HDBSCAN discovered only 5 dense clusters and assigned 839 of 5,000 fitted rows to the noise bucket "
-            "(16.78%). This is the clearest sign that minority or ambiguous behaviors are more often rejected as "
-            "outliers than given their own stable cluster."
-        ),
     },
     "GaussianMixture": {
         "rare_behavior": "fragments_and_microclusters",
-        "evidence": (
-            "GaussianMixture forced every point into a component and produced several tiny clusters "
-            "(sizes 1, 4, 15, 47, 57, and 84). That pattern is consistent with rare classes being split into "
-            "small fragments instead of forming one clean minority cluster."
-        ),
     },
     "MiniBatchKMeans": {
         "rare_behavior": "absorbed_into_larger_clusters",
-        "evidence": (
-            "MiniBatchKMeans also forced every point into a cluster, but with only 8 partitions it mainly created a "
-            "few medium-to-large groups. That behavior suggests minority classes are more likely to be absorbed into "
-            "the nearest majority cluster than isolated cleanly."
-        ),
     },
 }
 
@@ -90,6 +75,50 @@ def cluster_concentration(cluster_sizes: pd.Series) -> float:
     return float((shares**2).sum())
 
 
+def format_microcluster_sizes(sizes: pd.Series, *, threshold: int = 100) -> str:
+    microcluster_sizes = sorted(int(size) for size in sizes[sizes <= threshold].tolist())
+    if not microcluster_sizes:
+        return f"no clusters of size <= {threshold}"
+    if len(microcluster_sizes) <= 6:
+        return "sizes " + ", ".join(f"{size:,}" for size in microcluster_sizes)
+    shown = ", ".join(f"{size:,}" for size in microcluster_sizes[:6])
+    return f"sizes {shown}, and {len(microcluster_sizes) - 6} more"
+
+
+def build_interpretation(
+    algorithm: str,
+    *,
+    sizes: pd.Series,
+    non_noise: pd.Series,
+    noise_rows: int,
+    total_rows: int,
+    largest_cluster_fraction: float,
+    microcluster_count: int,
+) -> str:
+    if algorithm == "HDBSCAN":
+        return (
+            f"HDBSCAN discovered {len(non_noise)} dense non-noise clusters and assigned "
+            f"{noise_rows:,} of {total_rows:,} fitted rows to the noise bucket "
+            f"({noise_rows / total_rows:.2%}). This is the clearest sign that minority or ambiguous "
+            "behaviors are more often rejected as outliers than given their own stable cluster."
+        )
+    if algorithm == "GaussianMixture":
+        return (
+            "GaussianMixture forced every point into a component and produced "
+            f"{microcluster_count} microclusters ({format_microcluster_sizes(sizes)}). "
+            "That pattern is consistent with rare classes being split into small fragments instead of "
+            "forming one clean minority cluster."
+        )
+    if algorithm == "MiniBatchKMeans":
+        return (
+            f"MiniBatchKMeans also forced every point into a cluster, but with only {len(sizes)} partitions "
+            f"and a largest-cluster share of {largest_cluster_fraction:.2%}, it mainly created a few "
+            "medium-to-large groups. That behavior suggests minority classes are more likely to be absorbed "
+            "into the nearest majority cluster than isolated cleanly."
+        )
+    raise KeyError(f"Unsupported clustering algorithm for imbalance interpretation: {algorithm}")
+
+
 def build_algorithm_table(cluster_sizes: pd.DataFrame) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     for algorithm, subset in cluster_sizes.groupby("algorithm", sort=False):
@@ -98,6 +127,8 @@ def build_algorithm_table(cluster_sizes: pd.DataFrame) -> pd.DataFrame:
         noise_rows = int(subset.loc[subset["is_noise"].astype(bool), "cluster_size"].sum())
         total_rows = int(sizes.sum())
         interpretation = ALGORITHM_INTERPRETATIONS[algorithm]
+        largest_cluster_fraction = float(sizes.iloc[0] / total_rows)
+        microcluster_count = int((sizes <= 100).sum())
 
         rows.append(
             {
@@ -108,13 +139,21 @@ def build_algorithm_table(cluster_sizes: pd.DataFrame) -> pd.DataFrame:
                 "noise_rows": noise_rows,
                 "noise_fraction": round(noise_rows / total_rows, 4),
                 "largest_cluster_size": int(sizes.iloc[0]),
-                "largest_cluster_fraction": round(float(sizes.iloc[0] / total_rows), 4),
+                "largest_cluster_fraction": round(largest_cluster_fraction, 4),
                 "smallest_cluster_size": int(sizes.iloc[-1]),
-                "microcluster_count_leq_100": int((sizes <= 100).sum()),
+                "microcluster_count_leq_100": microcluster_count,
                 "microcluster_fraction_leq_100": round(float(sizes[sizes <= 100].sum() / total_rows), 4),
                 "cluster_concentration_hhi": round(cluster_concentration(sizes), 4),
                 "rare_class_tendency": interpretation["rare_behavior"],
-                "interpretation": interpretation["evidence"],
+                "interpretation": build_interpretation(
+                    algorithm,
+                    sizes=sizes,
+                    non_noise=non_noise,
+                    noise_rows=noise_rows,
+                    total_rows=total_rows,
+                    largest_cluster_fraction=largest_cluster_fraction,
+                    microcluster_count=microcluster_count,
+                ),
             }
         )
 

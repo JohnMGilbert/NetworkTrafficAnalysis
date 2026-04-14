@@ -47,7 +47,7 @@ Features retained & 67 numeric features after cleaning \\
 Features removed & 12 features with zero variance or no usable finite values \\
 Scaling choice & Z-score standardization with StandardScaler to support PCA and preserve informative attack deviations \\
 PCA result & 18 principal components retained at least 95\% of the variance \\
-Embedding sample & 100,000 rows, stratified to preserve the observed router distribution across 39 routers \\
+Embedding sample & 100,000 rows, stratified to preserve the observed router distribution across 10 routers \\
 Engineered features & \texttt{directional\_byte\_imbalance}, \texttt{bytes\_per\_packet}, \texttt{burst\_idle\_log\_ratio}, and \texttt{packet\_size\_asymmetry} \\
 Interpretation note & The \texttt{protocol} feature was removed during preprocessing because it had zero variance, so cluster interpretation relies on ports, duration, packet counts, byte counts, and directionality instead \\
 \bottomrule
@@ -59,9 +59,9 @@ These choices are important for the prediction submission because the semantic m
 \section{Clustering Model Selection}
 Three required clustering families were evaluated on the fitted sample: MiniBatchKMeans (partitional), HDBSCAN (density based), and GaussianMixture (model based). Hyperparameter comparisons were performed on a 2,000-row subset of the fitted sample to keep silhouette- and BIC-based model selection practical. Hyperparameters were selected using the criteria described in the assignment: silhouette-based selection for MiniBatchKMeans, a silhouette-times-coverage criterion for HDBSCAN, and BIC for GaussianMixture.
 
-The selected configurations were MiniBatchKMeans with \texttt{n\_clusters=8}, \texttt{batch\_size=4096}, \texttt{max\_iter=200}, and \texttt{n\_init=10}; HDBSCAN with \texttt{min\_cluster\_size=250}, \texttt{min\_samples=25}, and \texttt{cluster\_selection\_method=eom}; and GaussianMixture with \texttt{n\_components=14}, \texttt{covariance\_type=diag}, \texttt{reg\_covar=0.0001}, \texttt{max\_iter=200}, and \texttt{init\_params=kmeans}.
+The selected configurations were MiniBatchKMeans with \texttt{n\_clusters=8}, \texttt{batch\_size=4096}, \texttt{max\_iter=200}, and \texttt{n\_init=10}; HDBSCAN with \texttt{min\_cluster\_size=250}, \texttt{min\_samples=10}, and \texttt{cluster\_selection\_method=eom}; and GaussianMixture with \texttt{n\_components=14}, \texttt{covariance\_type=diag}, \texttt{reg\_covar=0.0001}, \texttt{max\_iter=200}, and \texttt{init\_params=kmeans}.
 
-Table~\ref{tab:internal_validation} shows the final internal validation results from Question 2.2(b). HDBSCAN produced the strongest overall profile, with the best silhouette score, the lowest Davies-Bouldin Index, and the highest Calinski-Harabasz Index. It recovered five non-noise clusters and labeled 16.78\% of the fitted sample as noise. That behavior is well matched to this assignment because the data are highly imbalanced; HDBSCAN can preserve dense majority structures without forcing rare or ambiguous flows into an artificial cluster.
+Table~\ref{tab:internal_validation} shows the final internal validation results from Question 2.2(b). HDBSCAN produced the strongest overall profile, with the best silhouette score, the lowest Davies-Bouldin Index, and the highest Calinski-Harabasz Index. It recovered five non-noise clusters and labeled 12.72\% of the fitted sample as noise. That behavior is well matched to this assignment because the data are highly imbalanced; HDBSCAN can preserve dense majority structures without forcing rare or ambiguous flows into an artificial cluster.
 
 \begin{table}[H]
 \caption{Internal validation comparison for the final clustering models.}
@@ -72,9 +72,9 @@ Table~\ref{tab:internal_validation} shows the final internal validation results 
 \toprule
 Algorithm & Clusters & Noise (\%) & Metric scope & Silhouette & DBI & CHI \\
 \midrule
-HDBSCAN & 5 & 16.78 & non-noise only & 0.5014 & 0.8603 & 3956.03 \\
-GaussianMixture & 14 & 0.00 & full sample & 0.3926 & 1.0465 & 1306.44 \\
-MiniBatchKMeans & 8 & 0.00 & full sample & 0.4026 & 1.0856 & 1296.47 \\
+HDBSCAN & 5 & 12.72 & non-noise only & 0.4719 & 0.9041 & 3387.73 \\
+GaussianMixture & 14 & 0.00 & full sample & 0.4311 & 1.3676 & 1364.52 \\
+MiniBatchKMeans & 8 & 0.00 & full sample & 0.3715 & 1.3678 & 834.01 \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -100,12 +100,12 @@ The final cluster-to-class mapping is shown in Table~\ref{tab:mapping}. Each map
 \toprule
 Cluster & Predicted label & Confidence & Rows & Share (\%) \\
 \midrule
-$-1$ & Unknown & low & 839 & 16.78 \\
-0 & DDoS TCP & high & 412 & 8.24 \\
-1 & DDoS Bot & medium & 1,287 & 25.74 \\
-2 & Normal & medium & 1,107 & 22.14 \\
-3 & DoS SlowHTTP & high & 378 & 7.56 \\
-4 & DoS Hulk & medium & 977 & 19.54 \\
+$-1$ & Unknown & low & 636 & 12.72 \\
+0 & DDoS TCP & high & 429 & 8.58 \\
+1 & DDoS Bot & medium & 1,406 & 28.12 \\
+2 & Normal & medium & 1,101 & 22.02 \\
+3 & DoS Hulk & medium & 1,040 & 20.80 \\
+4 & DoS SlowHTTP & high & 388 & 7.76 \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -113,12 +113,12 @@ $-1$ & Unknown & low & 839 & 16.78 \\
 The supporting evidence for each mapping is summarized below.
 
 \begin{itemize}
-\item \textbf{Cluster 0 to DDoS TCP (high confidence):} This cluster has extremely small flows, with mean 1.96 packets and 111.40 bytes per flow, and it is almost completely one directional with a mean down/up ratio of 0.00. That is consistent with compact TCP flood behavior that generates many low-content requests with minimal response traffic.
-\item \textbf{Cluster 1 to DDoS Bot (medium confidence):} This group contains large flows, averaging 105.64 packets and 79,220.44 bytes, with strong forward/backward packet-size asymmetry (0.84). Its traffic is concentrated on a narrow set of service ports, especially 7777 and 8080, which supports the interpretation of coordinated bot-driven flooding.
-\item \textbf{Cluster 2 to Normal (medium confidence):} This cluster consists of short, balanced exchanges with mean duration 545.15, mean 3.68 packets, and a down/up ratio of 1.00. Its destination ports are more varied than the attack-oriented clusters, making it the strongest candidate for routine benign background traffic in the fitted sample.
-\item \textbf{Cluster 3 to DoS SlowHTTP (high confidence):} These flows are very long lived, with mean duration 32,199,366, but extremely low rate at only 3.22 packets per second. That long-duration, low-rate profile is a strong fit for SlowHTTP-style application-layer connection exhaustion.
-\item \textbf{Cluster 4 to DoS Hulk (medium confidence):} This cluster has sustained flows with mean duration 13,891,066 and about 104.55 packets per flow. The behavior is more burst-like than benign traffic and is concentrated on a small set of destination ports, which is consistent with a Hulk-style HTTP flooding pattern.
-\item \textbf{Noise cluster to Unknown (low confidence):} HDBSCAN treated 839 flows as noise or outliers. Their destination ports are more mixed than the dense clusters and their average byte volume is comparatively high, which suggests a blend of rare attacks, ambiguous flows, and low-density behavior that should not be over-labeled without stronger evidence.
+\item \textbf{Cluster 0 to DDoS TCP (high confidence):} This cluster has extremely small flows, with mean 1.97 packets and 112.01 bytes per flow, and it is almost completely one directional with a mean down/up ratio of 0.00. That is consistent with compact TCP flood behavior that generates many low-content requests with minimal response traffic.
+\item \textbf{Cluster 1 to DDoS Bot (medium confidence):} This group contains large flows, averaging 108.93 packets and 81,243.86 bytes, with strong forward/backward packet-size asymmetry (0.84). Its traffic is concentrated on a narrow set of service ports, especially 7777 and 8080, which supports the interpretation of coordinated bot-driven flooding.
+\item \textbf{Cluster 2 to Normal (medium confidence):} This cluster consists of short, balanced exchanges with mean duration 1,152, mean 3.67 packets, and a down/up ratio of 1.00. Its destination ports are more varied than the attack-oriented clusters, making it the strongest candidate for routine benign background traffic in the fitted sample.
+\item \textbf{Cluster 3 to DoS Hulk (medium confidence):} This cluster has sustained flows with mean duration 13,728,396 and about 105.92 packets per flow. The behavior is more burst-like than benign traffic and is concentrated on a small set of destination ports, which is consistent with a Hulk-style HTTP flooding pattern.
+\item \textbf{Cluster 4 to DoS SlowHTTP (high confidence):} These flows are very long lived, with mean duration 30,921,802, but extremely low rate at only 3.38 packets per second. That long-duration, low-rate profile is a strong fit for SlowHTTP-style application-layer connection exhaustion.
+\item \textbf{Noise cluster to Unknown (low confidence):} HDBSCAN treated 636 flows as noise or outliers. Their destination ports are more mixed than the dense clusters and their average byte volume is comparatively high, which suggests a blend of rare attacks, ambiguous flows, and low-density behavior that should not be over-labeled without stronger evidence.
 \end{itemize}
 
 \section{Interpretation Relative to the 11 Known Classes}
